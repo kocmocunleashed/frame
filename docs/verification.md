@@ -4,6 +4,34 @@ Local verification date: **2026-10-24**. This is an implementation and local
 acceptance report, not a statement that an AWS production deployment exists.
 The complete product contract is in [master.md](../master.md).
 
+## Initial setup update — 2026-10-24
+
+Added `bun run setup` with preview, standalone Clerk and local erxes choices;
+masked key entry; exclusive configuration-file creation; and generated next
+commands. [The setup guide](setup.md) covers prerequisites, OpenRouter credits
+and keys, persistent storage, plugin installation and troubleshooting.
+
+Checks run for this update:
+
+- `bun install --frozen-lockfile`: passed, 328 installs across 398 packages.
+- `bun --no-env-file test tests/setup.test.ts`: 7 passed, 0 failed, 47 assertions.
+  Includes Bun loading the generated erxes settings, matching launch secrets,
+  file permissions, concurrent setup/overwrite protection, unsafe input rejection,
+  and mocked read-only OpenRouter checks without credential disclosure.
+- `bun run typecheck`: passed. `bun run build`: passed with Vite's existing
+  large-chunk advisory; 2,257 modules transformed.
+- Interactive terminal checks in temporary checkouts: preview setup, erxes
+  defaults, masked fixture key entry, and cancellation without writing files.
+- Fresh temporary checkout with its own frozen-lockfile dependency install:
+  generated preview configuration started successfully; health/readiness passed;
+  Chromium opened the local workspace, created a named blank deck, confirmed it
+  through the API, and reloaded the editor with zero browser runtime errors.
+- Local guide links resolve; `git diff --check` passed.
+
+No real provider calls, new Clerk account, AWS deployment, or new erxes host
+installation were performed for this setup update. The connection-check command
+uses only OpenRouter's key endpoint; it does not generate content.
+
 ## Delivered application
 
 The repository includes the React workspace and full editor, all ten object

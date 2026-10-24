@@ -13,6 +13,11 @@ Frame itself remains a separately deployed service. The small `frame_api`
 adapter runs beside erxes, with access to its gateway/shared libraries/Redis.
 It remains a host service; Frame runs separately on ECS.
 
+**Setting up a new computer?** Start with `bun run setup` in the Frame folder
+and follow [the copy-and-paste setup guide](../docs/setup.md). It covers Bun,
+local MongoDB, OpenRouter, matching launch secrets, and connecting these plugins
+to your existing erxes host.
+
 ## Preview locally
 
 For the installed host on this workstation, see
@@ -145,8 +150,7 @@ label chosen by the browser. Assign **Frame User** (`frame:user`) or grant
 `frameStudioOpen` to eligible erxes users. Keep the adapter behind the trusted
 erxes gateway/private network; it relies on erxes authentication and permissions.
 
-API port defaults to 3319 (`FRAME_ERXES_API_PORT` overrides it); UI dev port is
-3019. Start the adapter using the same service discovery settings as other
+API port defaults to 3319 (`FRAME_ERXES_API_PORT` overrides it); UI dev port is 3019. Start the adapter using the same service discovery settings as other
 plugins, and serve the generated UI assets from your static host.
 On current erxes hosts supporting custom remotes, configure `UI_ENTRY_URL` on
 the plugin API to the complete public `frame_ui/remoteEntry.js` URL. Confirm

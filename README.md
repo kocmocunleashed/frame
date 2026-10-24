@@ -4,22 +4,41 @@ Frame creates editable presentations from a blank canvas, templates, or AI-assis
 
 The supplied reference implementation was available locally, so its React renderer, editor, schemas, 46 curated themes, AI workflows, and erxes source plugins were reused. Persistence, file delivery, job transport, operational tools, and deployment definitions have been ported to MongoDB and AWS. See [master.md](master.md) for the product contract and [docs/verification.md](docs/verification.md) for measured results and outstanding gates. A build does not prove cloud or real-host deployment.
 
-## Local development
+## Start here
+
+Install **Bun 1.3.14**, **Node.js 22**, and Git, then copy and paste:
+
+```bash
+git clone https://github.com/kocmocunleashed/frame.git
+cd frame
+bun install --frozen-lockfile
+bun run setup
+```
+
+The wizard guides you through a local preview, standalone Clerk sign-in, or an
+existing erxes host. It explains how to create an OpenRouter key, accepts it in
+a hidden input, and prints the commands to start your chosen setup. AI is
+optional. Existing configuration is never overwritten.
+
+**[Follow the complete setup guide →](docs/setup.md)** for prerequisite installs,
+OpenRouter credits and key checks, persistent MongoDB, erxes plugin installation,
+and troubleshooting. The preview deletes its database on exit; choose Clerk or
+erxes to keep your work. Persistent local storage requires Docker Compose or an
+existing MongoDB replica set.
+
+## Local development details
 
 Prerequisites: Bun **1.3.14**, Node **22** (for the browser driver and MongoDB test fixture manager), Docker Compose or another way to run MongoDB **7.0.45** as a replica set, and Chromium installed by the pinned Playwright package. Use the official MongoDB driver **6.21.0**: newer BSON releases call a Node V8 API that Bun 1.3.14 does not implement.
 
-```bash
-bun install --frozen-lockfile
-bunx playwright install chromium
-cp -n .env.example .env
-docker compose up -d --wait
-bun run db:migrate
-bun run dev
-```
-
 The Mongo health check initializes `rs0` with `127.0.0.1:27017`; it checks `rs.status()` thereafter. Verify manually with `docker compose exec mongo mongosh --quiet --eval 'rs.status().ok'`. Run the API and worker on the host for this local profile. A standalone `mongod` without a replica set is rejected.
 
-The UI is at `http://127.0.0.1:5174`, the API at port 3158. Configure a Clerk development instance in `.env`, or configure the three erxes fields together. Missing authentication configuration produces an actionable error. There is no default password or production administrator. AI is optional; blank decks, editing, presentation, and exports do not require provider keys.
+The wizard uses `http://localhost:5174` for persistent setups and
+`http://127.0.0.1:5174` for the disposable preview. The persistent API uses port
+3158; the preview API uses 3141. Use the exact origin printed by setup. Configure
+a Clerk development instance in `.env`, or configure the three erxes fields
+together. Missing authentication configuration produces an actionable error.
+There is no default password or production administrator. AI is optional; blank
+decks, editing, presentation, and exports do not require provider keys.
 
 Playwright browser tasks run in a bounded Node subprocess to avoid Bun 1.3.14's
 intermittent Chromium control-pipe failure on repeated launches. API, workers,
@@ -46,7 +65,8 @@ billable provider requests and shows that distinction in the banner. Put
 `OPENROUTER_API_KEY` only in the ignored `.env`; never use a `VITE_` key for
 secrets. The example configuration pins Muse Contributor with $0.10/M input
 and $0.20/M output ceilings and no paid-model fallback. Ordinary fixture and
-test commands always strip provider credentials. `bun run check:ai --once`
+test commands always strip provider credentials. `bun run check:openrouter`
+checks key authentication without generating content. `bun run check:ai --once`
 performs five bounded real provider checks. For the full studio check, launch
 the live harness on port 5191 and run `bun scripts/check-live-studio.ts`.
 
@@ -112,4 +132,3 @@ bun run ops maintenance --execute
 ```
 
 Restore requires an empty isolated database and empty storage namespace. Set `FRAME_BACKUP_KEY` to an independent random 32-byte hexadecimal key; encryption is mandatory for production backups. The logical backup uses one MongoDB snapshot read session and immutable objects. Retain managed Atlas backups and S3 versions separately. Sessions are invalidated, live sessions are ended, and unfinished jobs are cancelled on restore. Verify a restored environment before exposing it. See [docs/operations.md](docs/operations.md).
-# frame
