@@ -4,6 +4,10 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import {
+  MUSE_CONTRIBUTOR_MODEL,
+  PINNED_OPENROUTER_MODELS,
+} from "../shared/openrouter-models";
+import {
   makeSetup,
   setupOrigin,
   writeSetup,
@@ -163,8 +167,19 @@ async function main() {
     }),
   );
   if (ai) {
+    options.openrouterModel = await answer(
+      p.select<NonNullable<SetupOptions["openrouterModel"]>>({
+        message: "AI model",
+        initialValue: MUSE_CONTRIBUTOR_MODEL,
+        options: PINNED_OPENROUTER_MODELS.map((model) => ({
+          value: model.id,
+          label: model.label,
+          hint: `$${model.inputPrice.toFixed(2)}/M input, $${model.outputPrice.toFixed(2)}/M output ceilings`,
+        })),
+      }),
+    );
     p.note(
-      "1. Sign in at https://openrouter.ai\n2. Add credits at https://openrouter.ai/settings/credits\n3. Create a key with a spending limit at https://openrouter.ai/settings/keys\n4. Paste it below. The key stays in your ignored .env.\n\nFrame pins meta/muse-spark-1.3-contributor.\nCeilings: $0.10 per million input tokens / $0.20 per million output tokens.\nAvailability, access and current prices are checked at generation time; no paid fallback.\nRead the model's current contributor/data terms before sending private material.",
+      `1. Sign in at https://openrouter.ai\n2. Add credits at https://openrouter.ai/settings/credits\n3. Create a key with a spending limit at https://openrouter.ai/settings/keys\n4. Paste it below. The key stays in your ignored .env.\n\nFrame pins ${options.openrouterModel}.\nAvailability, access and current prices are checked at generation time; no fallback to a different model.\nRead the model's current data-use terms before sending private material.`,
       "OpenRouter",
     );
     options.openrouterKey = await answer(

@@ -261,12 +261,13 @@ limit and enter the key through the protected input described above. Do not
 purchase credits or raise a spending cap on their behalf unless authorized.
 Detailed instructions are in [Connect OpenRouter](docs/setup.md#connect-openrouter).
 
-Preserve `meta/muse-spark-1.3-contributor` and
-`OPENROUTER_MUSE_CONTRIBUTOR_ENABLED=true`. Frame's current application ceilings
-are $0.10 per million input tokens and $0.20 per million output tokens; runtime
-catalog checks determine current access and prices. Do not silently select a
-different paid model. Frame's unlimited presentation credits do not make provider
-requests free.
+Preserve the selected model. The wizard defaults to `meta/muse-spark-1.3-contributor`
+with `OPENROUTER_MUSE_CONTRIBUTOR_ENABLED=true` and application ceilings of $0.10/M
+input and $0.20/M output. It also offers paid `google/gemma-4-31b-it`, with ceilings
+of $0.20/M input and $0.40/M output; set the Muse flag to `false` for Gemma.
+Runtime catalog checks determine current access, capabilities, and prices. Both
+models stay pinned during retries. Do not silently select a different paid model.
+Frame's unlimited presentation credits do not make provider requests free.
 
 After server-side configuration, run:
 

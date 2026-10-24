@@ -165,7 +165,7 @@ export class CreativeWorkflows {
     return {
       ...batch,
       warnings: [
-        "Muse’s visual review could not finish for this batch. Your generated slides were kept; check their layout before presenting.",
+        "AI visual review could not finish for this batch. Your generated slides were kept; check their layout before presenting.",
       ],
       visualReview: {
         checks: 0,

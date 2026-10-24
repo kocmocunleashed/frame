@@ -70,8 +70,10 @@ To use the configured OpenRouter account in this loopback harness, run
 `bun run dev:fixture --live-ai`. It retains the test identity but uses real,
 billable provider requests and shows that distinction in the banner. Put
 `OPENROUTER_API_KEY` only in the ignored `.env`; never use a `VITE_` key for
-secrets. The example configuration pins Muse Contributor with $0.10/M input
-and $0.20/M output ceilings and no paid-model fallback. Ordinary fixture and
+secrets. The default configuration pins Muse Contributor with $0.10/M input
+and $0.20/M output ceilings. Setup also offers paid Gemma 4 31B at $0.20/M input
+and $0.40/M output ceilings. Both keep the selected model during retries;
+see [model configuration](docs/setup.md#connect-openrouter). Ordinary fixture and
 test commands always strip provider credentials. `bun run check:openrouter`
 checks key authentication without generating content. `bun run check:ai --once`
 performs five bounded real provider checks. For the full studio check, launch

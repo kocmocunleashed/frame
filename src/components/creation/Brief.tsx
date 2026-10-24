@@ -60,7 +60,7 @@ export function BriefDetails({ brief, onChange }: Props) {
           <span>
             <strong>Research the web first</strong>
             <small>
-              Find public sources for your topic before writing. Uses Muse
+              Find public sources for your topic before writing. Uses web
               search; up to two searches at $0.007 each, plus AI usage. Turn off
               for private topics.
             </small>

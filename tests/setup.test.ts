@@ -17,6 +17,10 @@ import {
   type SetupOptions,
 } from "../scripts/setup-config";
 import { checkOpenRouterKey } from "../scripts/check-openrouter";
+import {
+  GEMMA4_MODEL,
+  MUSE_CONTRIBUTOR_MODEL,
+} from "../shared/openrouter-models";
 
 const template = await readFile(
   new URL("../.env.example", import.meta.url),
@@ -40,6 +44,34 @@ async function temporary(run: (root: string) => Promise<void>) {
 }
 
 describe("fresh setup", () => {
+  test("setup defaults to Muse and can pin paid Gemma without changing credentials", () => {
+    const key = "sk-or-v1-" + "fixture".repeat(8);
+    for (const model of [
+      undefined,
+      MUSE_CONTRIBUTOR_MODEL,
+      GEMMA4_MODEL,
+    ] as const) {
+      const setup = makeSetup(template, {
+        ...erxes,
+        openrouterKey: key,
+        openrouterModel: model,
+      });
+      expect(setup.env).toContain(
+        `OPENROUTER_MODEL="${model ?? MUSE_CONTRIBUTOR_MODEL}"`,
+      );
+      expect(setup.env).toContain(`OPENROUTER_API_KEY="${key}"`);
+      expect(setup.env).toContain(
+        `OPENROUTER_MUSE_CONTRIBUTOR_ENABLED="${model !== GEMMA4_MODEL}"`,
+      );
+      expect(setup.adapter).not.toContain(key);
+    }
+    expect(
+      setupOptions.safeParse({
+        ...erxes,
+        openrouterModel: "unrelated/paid-model",
+      }).success,
+    ).toBe(false);
+  });
   test("erxes env files load with matching secrets and isolated, persistent local settings", async () => {
     await temporary(async (root) => {
       const setup = makeSetup(template, erxes);

@@ -65,7 +65,7 @@ export default function ProgressivePreviews({
       <p className="creative-intro">
         {job.reviewedSlides === undefined
           ? "Each slide gets its own composition and custom look. Completed work is saved as it arrives."
-          : "Generated slides appear first. Muse then inspects their images and makes targeted visual fixes. Updated previews appear as each check finishes."}
+          : "Generated slides appear first. AI then inspects their images and makes targeted visual fixes. Updated previews appear as each check finishes."}
       </p>
       {error && <p role="alert">{error}</p>}
       <div className="progressive-preview-grid">

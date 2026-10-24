@@ -6,7 +6,7 @@ export function creationProgress(job: AIJob, hasSources = false) {
         {
           title: "Research the web",
           detail:
-            "Muse is searching for public sources and gathering linked excerpts before writing. Research is saved and reused for the slides.",
+            "AI is searching for public sources and gathering linked excerpts before writing. Research is saved and reused for the slides.",
         },
       ]
     : [];
@@ -31,7 +31,7 @@ export function creationProgress(job: AIJob, hasSources = false) {
             {
               title: "Review and refine visuals",
               detail:
-                "Muse inspects rendered slide images, fixes visible layout problems, then looks again. Generated slides stay saved throughout.",
+                "AI inspects rendered slide images, fixes visible layout problems, then looks again. Generated slides stay saved throughout.",
             },
           ]
         : []),

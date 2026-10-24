@@ -85,11 +85,25 @@ This calls only OpenRouter's documented
 [`GET /api/v1/key`](https://openrouter.ai/docs/api_reference/limits) endpoint.
 Success checks authentication, not the availability of a model or a sufficient balance.
 
-Frame pins **Muse Spark 1.3 Contributor**. Its application price ceilings are
-**$0.10 per million input tokens and $0.20 per million output tokens**. These
-are ceilings in Frame's code, not a guaranteed future OpenRouter price or access
-entitlement. Frame checks the catalog before generation and refuses an unavailable
-or overpriced route rather than switching to another paid model. Web research
+The wizard offers two pinned paid models. Muse remains the default:
+
+| Model | `OPENROUTER_MODEL` | Input ceiling /M | Output ceiling /M |
+| --- | --- | --- | --- |
+| Muse Spark 1.3 Contributor | `meta/muse-spark-1.3-contributor` | $0.10 | $0.20 |
+| Gemma 4 31B | `google/gemma-4-31b-it` | $0.20 | $0.40 |
+
+To select paid [Gemma 4 31B](https://openrouter.ai/google/gemma-4-31b-it), set:
+
+```dotenv
+OPENROUTER_MODEL=google/gemma-4-31b-it
+OPENROUTER_MUSE_CONTRIBUTOR_ENABLED=false
+```
+
+Both use the same OpenRouter key and support image input, visual review, and web
+research after runtime capability checks. These prices are application ceilings,
+not a guaranteed future OpenRouter price or access entitlement. Frame checks the
+catalog before generation and refuses an unavailable or overpriced route.
+Retries keep the selected model; Gemma output is capped at 16,384 tokens. Web research
 has its own bounded allowance and may add cost. Read the model's current
 contributor and data-use terms in OpenRouter before submitting private material.
 
@@ -280,7 +294,7 @@ to stop a workspace you want to keep.**
 | Sign-in configuration unavailable          | Choose erxes or Clerk settings. Preview mode uses `bun run dev:fixture`, not `bun run dev`.                                 |
 | OpenRouter 401                             | Replace an expired/invalid key in `.env`, then restart API and worker.                                                      |
 | OpenRouter 402/429                         | Check balance, key caps and rate limits in OpenRouter; wait or adjust your limit there.                                     |
-| Muse unavailable or pricing rejected       | Check that exact route and account access. Frame refuses a paid fallback; manual tools still work.                          |
+| Pinned model unavailable or pricing rejected | Check the selected route and account access. Frame keeps the model pinned; manual tools still work.                      |
 | erxes `Login required` / permission denied | Sign into the host and grant `frameStudioOpen`; never use a shared Frame administrator login.                               |
 | erxes remote `Script error`                | Verify the host and plugin share React, React DOM and Apollo; see the included compatibility patch.                         |
 | erxes deployment binding mismatch          | Use a separate Frame database for a different host origin/tenant. Do not relabel an existing tenant's database.             |

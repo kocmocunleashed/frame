@@ -6,10 +6,16 @@ import { JobFailure } from "./jobs";
 import { researchFromAnnotations } from "./web-research";
 import type { WebResearch } from "../shared/ai-research";
 import { DeadlineExceeded, withDeadline } from "./deadline";
+import {
+  MUSE_CONTRIBUTOR_MODEL,
+  PINNED_OPENROUTER_MODELS,
+  type PinnedOpenRouterModel,
+} from "../shared/openrouter-models";
+export {
+  MUSE_CONTRIBUTOR_MODEL,
+  GEMMA4_MODEL,
+} from "../shared/openrouter-models";
 export const DEFAULT_FREE_MODEL = "nvidia/nemotron-3.5-super-vl:free";
-export const MUSE_CONTRIBUTOR_MODEL = "meta/muse-spark-1.3-contributor";
-const MUSE_INPUT_PRICE = 0.1;
-const MUSE_OUTPUT_PRICE = 0.2;
 // OpenRouter's Exa fast engine: $0.007/search, at most two calls.
 const SEARCH_ALLOWANCE = 0.014;
 const catalogSchema = z.object({ data: z.array(z.unknown()).max(10000) });
@@ -35,15 +41,18 @@ const withinPrice = (value: string | undefined, ceiling: number) =>
   Number.isFinite(Number(value)) &&
   Number(value) >= 0 &&
   Number(value) <= ceiling;
-const verifiedMuse = (entry: z.infer<typeof modelEntrySchema>) =>
-  entry.id === MUSE_CONTRIBUTOR_MODEL &&
-  withinPrice(entry.pricing.prompt, MUSE_INPUT_PRICE / 1000000) &&
-  withinPrice(entry.pricing.completion, MUSE_OUTPUT_PRICE / 1000000) &&
+const verifiedPinned = (
+  entry: z.infer<typeof modelEntrySchema>,
+  pinned: PinnedOpenRouterModel,
+) =>
+  entry.id === pinned.id &&
+  withinPrice(entry.pricing.prompt, pinned.inputPrice / 1000000) &&
+  withinPrice(entry.pricing.completion, pinned.outputPrice / 1000000) &&
   Object.entries(entry.pricing).every(
     ([key, value]) =>
       ["prompt", "completion", "web_search"].includes(key) ||
       (["input_cache_read", "input_cache_write"].includes(key)
-        ? withinPrice(value, MUSE_INPUT_PRICE / 1000000)
+        ? withinPrice(value, pinned.inputPrice / 1000000)
         : zeroPrice(value)),
   );
 export class OpenRouterProvider implements AIProvider {
@@ -54,7 +63,7 @@ export class OpenRouterProvider implements AIProvider {
   readonly supportsWebSearch: boolean;
   private client: OpenAI | null;
   private unavailableUntil = new Map<string, number>();
-  private readonly muse: boolean;
+  private readonly pinned: PinnedOpenRouterModel | undefined;
   constructor(
     private apiKey = process.env.OPENROUTER_API_KEY,
     private model = process.env.OPENROUTER_MODEL || DEFAULT_FREE_MODEL,
@@ -62,11 +71,15 @@ export class OpenRouterProvider implements AIProvider {
     enableMuse = process.env.OPENROUTER_MUSE_CONTRIBUTOR_ENABLED === "true",
     private requestTimeoutMs = 150000,
   ) {
-    this.muse = enableMuse && model === MUSE_CONTRIBUTOR_MODEL;
-    this.supportsVisualReview = this.muse;
-    this.supportsWebSearch = this.muse;
-    this.label = this.muse
-      ? "OpenRouter · Muse Spark 1.3 Contributor"
+    this.pinned = PINNED_OPENROUTER_MODELS.find(
+      (candidate) =>
+        candidate.id === model &&
+        (model !== MUSE_CONTRIBUTOR_MODEL || enableMuse),
+    );
+    this.supportsVisualReview = !!this.pinned;
+    this.supportsWebSearch = !!this.pinned;
+    this.label = this.pinned
+      ? `OpenRouter · ${this.pinned.label}`
       : "OpenRouter · free models";
     this.configured = !!apiKey;
     this.supportsImages =
@@ -74,7 +87,7 @@ export class OpenRouterProvider implements AIProvider {
         DEFAULT_FREE_MODEL,
         "dots-studio/dots-3-note-preview:free",
         "openrouter/free",
-      ].includes(model) || this.muse;
+      ].includes(model) || !!this.pinned;
     this.client = apiKey
       ? new OpenAI({
           apiKey,
@@ -102,7 +115,7 @@ export class OpenRouterProvider implements AIProvider {
   ): Promise<WebResearch> {
     if (!this.supportsWebSearch)
       throw new JobFailure(
-        "Web research is only enabled for the approved Muse provider.",
+        "Web research is only enabled for a pinned Muse or Gemma 4 provider.",
       );
     return (await this.complete(
       "presentation_web_research",
@@ -161,8 +174,8 @@ export class OpenRouterProvider implements AIProvider {
           }),
         );
         throw new JobFailure(
-          this.muse
-            ? "Muse Contributor timed out before completing its response. A bounded retry will use the same model."
+          this.pinned
+            ? `${this.pinned.label} timed out before completing its response. A bounded retry will use the same model.`
             : "The free model timed out before completing its response. A bounded retry will try another verified free model.",
           true,
         );
@@ -185,7 +198,7 @@ export class OpenRouterProvider implements AIProvider {
         "AI is not configured. Ask the server owner to connect OpenRouter. Manual editing remains available.",
       );
     if (
-      !this.muse &&
+      !this.pinned &&
       !this.model.endsWith(":free") &&
       this.model !== "openrouter/free"
     )
@@ -196,7 +209,7 @@ export class OpenRouterProvider implements AIProvider {
       typeof value !== "number" ||
       !Number.isFinite(value) ||
       value < 0 ||
-      (this.muse ? value > 0.05 : value !== 0);
+      (this.pinned ? value > 0.05 : value !== 0);
     let model = this.model;
     let phase = "catalog";
     try {
@@ -220,7 +233,10 @@ export class OpenRouterProvider implements AIProvider {
       const catalog = catalogSchema.parse(JSON.parse(text));
       // Let the durable queue perform bounded retries, using another free route
       // while a timed-out provider cools down. Recheck its price on every call.
-      if (!this.muse && (this.unavailableUntil.get(model) || 0) > Date.now()) {
+      if (
+        !this.pinned &&
+        (this.unavailableUntil.get(model) || 0) > Date.now()
+      ) {
         const alternative = FREE_ALTERNATIVES.find((candidate) => {
           if ((this.unavailableUntil.get(candidate) || 0) > Date.now())
             return false;
@@ -263,10 +279,15 @@ export class OpenRouterProvider implements AIProvider {
             typeof m === "object" && m !== null && "id" in m && m.id === model,
         ),
       );
-      if (!entry || !(this.muse ? verifiedMuse(entry) : verifiedFree(entry)))
+      if (
+        !entry ||
+        !(this.pinned
+          ? verifiedPinned(entry, this.pinned)
+          : verifiedFree(entry))
+      )
         throw new JobFailure(
-          this.muse
-            ? "Muse Contributor pricing could not be verified within $0.10/M input and $0.20/M output. No inference was sent."
+          this.pinned
+            ? `${this.pinned.label} pricing could not be verified within $${this.pinned.inputPrice.toFixed(2)}/M input and $${this.pinned.outputPrice.toFixed(2)}/M output. No inference was sent.`
             : "This model is not currently verified as free. Generation stopped before inference; paid fallback is disabled.",
         );
       if (
@@ -292,7 +313,7 @@ export class OpenRouterProvider implements AIProvider {
         model,
         stream: true as const,
         stream_options: { include_usage: true },
-        max_tokens: webSearch ? 2000 : 20000,
+        max_tokens: webSearch ? 2000 : (this.pinned?.maxOutputTokens ?? 20000),
         messages: [
           { role: "system" as const, content: instructions },
           {
@@ -329,10 +350,11 @@ export class OpenRouterProvider implements AIProvider {
           : { response_format: zodResponseFormat(schema, name) }),
         provider: {
           require_parameters: true,
-          ...(this.muse ? { allow_fallbacks: false, only: ["meta"] } : {}),
+          ...(this.pinned ? { allow_fallbacks: false } : {}),
+          ...(this.pinned?.providers ? { only: this.pinned.providers } : {}),
           max_price: {
-            prompt: this.muse ? MUSE_INPUT_PRICE : 0,
-            completion: this.muse ? MUSE_OUTPUT_PRICE : 0,
+            prompt: this.pinned?.inputPrice ?? 0,
+            completion: this.pinned?.outputPrice ?? 0,
             request: 0,
             image: 0,
           },
@@ -384,7 +406,7 @@ export class OpenRouterProvider implements AIProvider {
           })()
         : await client.chat.completions.create(request, { signal });
       for await (const chunk of chunks) {
-        if (this.muse && chunk.model && chunk.model !== MUSE_CONTRIBUTOR_MODEL)
+        if (this.pinned && chunk.model && chunk.model !== this.pinned.id)
           throw new JobFailure(
             "OpenRouter returned an unexpected model. Nothing was applied.",
           );
@@ -420,7 +442,7 @@ export class OpenRouterProvider implements AIProvider {
           throw new JobFailure(
             "The provider reported unexpected pricing. This result was withheld; ask the server owner to inspect usage before retrying.",
           );
-        if (this.muse && usage?.cost !== undefined) {
+        if (this.pinned && usage?.cost !== undefined) {
           const searchCalls = usage.server_tool_use?.web_search_requests;
           if (
             searchCalls !== undefined &&
@@ -432,8 +454,9 @@ export class OpenRouterProvider implements AIProvider {
               "The provider reported unexpected search usage. This result was withheld; check OpenRouter usage before retrying.",
             );
           const ceiling =
-            (Number(usage.prompt_tokens) * MUSE_INPUT_PRICE) / 1000000 +
-            (Number(usage.completion_tokens) * MUSE_OUTPUT_PRICE) / 1000000 +
+            (Number(usage.prompt_tokens) * this.pinned.inputPrice) / 1000000 +
+            (Number(usage.completion_tokens) * this.pinned.outputPrice) /
+              1000000 +
             (webSearch
               ? searchCalls === undefined
                 ? SEARCH_ALLOWANCE
@@ -461,15 +484,15 @@ export class OpenRouterProvider implements AIProvider {
           this.unavailableUntil.set(model, Date.now() + 5 * 60000);
         throw new JobFailure(
           interrupted
-            ? this.muse
-              ? "Muse Contributor disconnected before completing its response. A bounded retry will use the same model."
+            ? this.pinned
+              ? `${this.pinned.label} disconnected before completing its response. A bounded retry will use the same model.`
               : "The free model disconnected before completing its response. A bounded retry will try another verified free model."
             : "The model returned an incomplete or refused response. Nothing was applied. Try a smaller request.",
           interrupted,
         );
       }
       if (
-        (this.muse && cost === undefined) ||
+        (this.pinned && cost === undefined) ||
         (cost !== undefined && unexpectedCost(cost))
       )
         throw new JobFailure(
@@ -510,8 +533,8 @@ export class OpenRouterProvider implements AIProvider {
           }),
         );
         throw new JobFailure(
-          this.muse
-            ? "Muse Contributor could not complete the connection. A bounded retry will use the same model."
+          this.pinned
+            ? `${this.pinned.label} could not complete the connection. A bounded retry will use the same model.`
             : timedOut
               ? "The free model timed out before returning a response. A bounded retry will try another verified free model."
               : "The free-model connection failed. A bounded retry will try another verified free model.",
@@ -561,14 +584,14 @@ export class OpenRouterProvider implements AIProvider {
             "OpenRouter’s daily free-model request limit has been reached. Completed slides are saved. Resume after the free quota resets or connect another key with available free quota. Paid fallback remains disabled.",
           );
         throw new JobFailure(
-          this.muse
+          this.pinned
             ? status === 401 || status === 403
-              ? "OpenRouter credentials or Muse Contributor permissions need attention. Check the account and paid-training privacy setting."
+              ? `OpenRouter credentials or ${this.pinned.label} permissions need attention. Check the account${this.model === MUSE_CONTRIBUTOR_MODEL ? " and paid-training privacy setting" : " and model access"}.`
               : status === 402
                 ? "OpenRouter credits or the key’s spending limit are exhausted. Completed work is saved; add credits or update the key limit before resuming."
                 : status === 404
-                  ? "Muse Contributor has no permitted endpoint. Check OpenRouter’s paid-training privacy setting and the configured price limits."
-                  : "Muse Contributor could not finish this request. Temporary failures use bounded retries of the same model. Your presentation is unchanged."
+                  ? `${this.pinned.label} has no permitted endpoint. Check OpenRouter’s account settings and the configured price limits.`
+                  : `${this.pinned.label} could not finish this request. Temporary failures use bounded retries of the same model. Your presentation is unchanged.`
             : status === 401 || status === 403
               ? "OpenRouter credentials or free-model permissions need attention. Ask the server owner to check the account."
               : status === 402
@@ -603,8 +626,8 @@ export class OpenRouterProvider implements AIProvider {
         }),
       );
       throw new JobFailure(
-        this.muse
-          ? "The Muse Contributor connection failed. A bounded retry will use the same model."
+        this.pinned
+          ? `The ${this.pinned.label} connection failed. A bounded retry will use the same model.`
           : "The free-model connection failed. A bounded retry will be attempted.",
         true,
       );

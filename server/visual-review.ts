@@ -242,7 +242,7 @@ export async function reviewVisualBatch(
     await context.progress(
       previous
         ? "Rechecking visuals after fixes"
-        : "Reviewing visuals with Muse",
+        : "Reviewing visuals with AI",
       previous ? 85 : 30,
     );
     const projected = publicProjection(doc, (id) => `/api/assets/${id}`);
@@ -315,7 +315,7 @@ export async function reviewVisualBatch(
           return pack(
             original,
             [
-              "Muse flagged visual issues that need your review, but proposed no safe automatic fixes.",
+              "AI flagged visual issues that need your review, but proposed no safe automatic fixes.",
               ...issueNotes,
             ],
             0,
@@ -394,8 +394,8 @@ export async function reviewVisualBatch(
             ]
           : []),
         checks
-          ? "Muse’s visual fixes could not be confirmed. The generated design was kept for your review."
-          : "Muse’s visual review could not finish. Your generated slides are available; check their layout before presenting.",
+          ? "AI visual fixes could not be confirmed. The generated design was kept for your review."
+          : "AI visual review could not finish. Your generated slides are available; check their layout before presenting.",
         ...(error instanceof JobFailure ? [error.message] : []),
         ...issueNotes,
       ],

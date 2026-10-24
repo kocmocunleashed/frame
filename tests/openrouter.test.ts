@@ -5,6 +5,7 @@ import {
   OpenRouterProvider,
   DEFAULT_FREE_MODEL,
   MUSE_CONTRIBUTOR_MODEL,
+  GEMMA4_MODEL,
 } from "../server/openrouter";
 import { JobFailure, JobQueue, JobWorker } from "../server/jobs";
 import { Store } from "./mongo";
@@ -28,6 +29,7 @@ function fixture(
     enableMuse?: boolean;
     responseModel?: string;
     omitCost?: boolean;
+    searchCalls?: number;
     stallStream?: boolean;
     requestTimeoutMs?: number;
   } = {},
@@ -121,6 +123,10 @@ function fixture(
         prompt_tokens: 1,
         completion_tokens: 1,
         total_tokens: 2,
+        server_tool_use:
+          options.searchCalls === undefined
+            ? undefined
+            : { web_search_requests: options.searchCalls },
       },
     };
     if (body.stream && options.stallStream)
@@ -298,6 +304,160 @@ test("explicit Muse opt-in pins Meta at approved rates and accepts verified paid
     only: ["meta"],
     max_price: { prompt: 0.1, completion: 0.2, request: 0, image: 0 },
   });
+});
+test("paid Gemma pins its route, prices, image input, structured output and output limit", async () => {
+  const { provider, calls } = fixture({
+    model: GEMMA4_MODEL,
+    pricing: { prompt: "0.0000002", completion: "0.0000004" },
+    cost: 0.0000006,
+  });
+  expect(provider.label).toBe("OpenRouter · Gemma 4 31B");
+  expect(provider.supportsImages).toBe(true);
+  expect(provider.supportsVisualReview).toBe(true);
+  expect(provider.supportsWebSearch).toBe(true);
+  expect(
+    await provider.generate(
+      "outline",
+      schema,
+      "Return data",
+      {},
+      new AbortController().signal,
+      ["data:image/png;base64,AAAA"],
+    ),
+  ).toEqual({ title: "Structured slide" });
+  const request = calls[1].body;
+  expect(request.model).toBe(GEMMA4_MODEL);
+  expect(request.max_tokens).toBe(16384);
+  expect(request.response_format.type).toBe("json_schema");
+  expect(request.messages[1].content[1].image_url.url).toBe(
+    "data:image/png;base64,AAAA",
+  );
+  expect(request.provider).toEqual({
+    require_parameters: true,
+    allow_fallbacks: false,
+    max_price: { prompt: 0.2, completion: 0.4, request: 0, image: 0 },
+  });
+});
+test("Gemma rejects price increases, unsupported capabilities and unverified results", async () => {
+  const pricing = { prompt: "0.0000002", completion: "0.0000004" };
+  for (const options of [
+    { pricing: { ...pricing, prompt: "0.00000021" } },
+    { pricing: { ...pricing, completion: "0.00000041" } },
+    { pricing: { ...pricing, request: "0.001" } },
+    { pricing: { ...pricing, input_cache_read: "0.00000021" } },
+    { parameters: ["response_format"] },
+    { vision: false },
+  ]) {
+    const { provider, calls } = fixture({
+      model: GEMMA4_MODEL,
+      pricing,
+      ...options,
+    });
+    await expect(
+      provider.generate(
+        "outline",
+        schema,
+        "",
+        {},
+        new AbortController().signal,
+        ["data:image/png;base64,AAAA"],
+      ),
+    ).rejects.toBeInstanceOf(JobFailure);
+    expect(calls.filter((call) => call.body)).toHaveLength(0);
+  }
+  for (const options of [
+    { omitCost: true },
+    { cost: 0.01 },
+    { responseModel: MUSE_CONTRIBUTOR_MODEL },
+    { responseModel: `${GEMMA4_MODEL}:free` },
+    { content: '{"title":42}' },
+  ]) {
+    const { provider } = fixture({ model: GEMMA4_MODEL, pricing, ...options });
+    await expect(
+      provider.generate(
+        "outline",
+        schema,
+        "",
+        {},
+        new AbortController().signal,
+      ),
+    ).rejects.toBeInstanceOf(JobFailure);
+  }
+});
+test("Gemma research checks tool support and enforces the shared search allowance", async () => {
+  const options = {
+    model: GEMMA4_MODEL,
+    pricing: { prompt: "0.0000002", completion: "0.0000004" },
+    parameters: ["tools", "structured_outputs"],
+    searchCalls: 2,
+    cost: 0.0140006,
+  };
+  const { provider, calls } = fixture(options);
+  const research = await provider.research(
+    "Public topic",
+    "en",
+    new AbortController().signal,
+  );
+  expect(research.status).toBe("unavailable"); // No citation annotations in this fixture.
+  expect(calls[1].body.model).toBe(GEMMA4_MODEL);
+  expect(calls[1].body.max_tokens).toBe(2000);
+  expect(calls[1].body.max_tool_calls).toBe(2);
+  expect(calls[1].body.tools[0].type).toBe("openrouter:web_search");
+  expect(calls[1].body.stream).toBe(false);
+  const unsupported = fixture({
+    ...options,
+    parameters: ["structured_outputs"],
+  });
+  await expect(
+    unsupported.provider.research(
+      "Public topic",
+      "en",
+      new AbortController().signal,
+    ),
+  ).rejects.toThrow("tool calling");
+  expect(unsupported.calls.filter((call) => call.body)).toHaveLength(0);
+  for (const overrides of [{ searchCalls: 3 }, { cost: 0.0141 }]) {
+    const invalid = fixture({ ...options, ...overrides });
+    await expect(
+      invalid.provider.research(
+        "Public topic",
+        "en",
+        new AbortController().signal,
+      ),
+    ).rejects.toBeInstanceOf(JobFailure);
+  }
+});
+test("Gemma retries stay on the paid Gemma route and exhausted credits stop retries", async () => {
+  const options = {
+    model: GEMMA4_MODEL,
+    pricing: { prompt: "0.0000002", completion: "0.0000004" },
+  };
+  const { provider, calls } = fixture({
+    ...options,
+    connectionFailure: "timeout",
+  });
+  for (let attempt = 0; attempt < 2; attempt++)
+    await expect(
+      provider.generate(
+        "outline",
+        schema,
+        "",
+        {},
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow("same model");
+  expect(
+    calls.filter((call) => call.body).map((call) => call.body.model),
+  ).toEqual([GEMMA4_MODEL, GEMMA4_MODEL]);
+  const exhausted = fixture({ ...options, status: 402 });
+  const error = await exhausted.provider
+    .generate("outline", schema, "", {}, new AbortController().signal)
+    .catch((error) => error);
+  expect(error).toBeInstanceOf(JobFailure);
+  if (!(error instanceof JobFailure))
+    throw new Error("Expected exhausted credits");
+  expect(error.retryable).toBe(false);
+  expect(error.message).toContain("credits");
 });
 test("Muse opt-in never authorizes another paid model, a price increase, missing usage or model substitution", async () => {
   for (const options of [

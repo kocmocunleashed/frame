@@ -2,6 +2,10 @@ import { randomBytes } from "node:crypto";
 import { lstat, open, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
+import {
+  GEMMA4_MODEL,
+  MUSE_CONTRIBUTOR_MODEL,
+} from "../shared/openrouter-models";
 
 export const setupOrigin = z.string().refine((value) => {
   try {
@@ -21,6 +25,7 @@ export const setupOrigin = z.string().refine((value) => {
 export const setupOptions = z
   .object({
     mode: z.enum(["preview", "standalone", "erxes"]),
+    openrouterModel: z.enum([MUSE_CONTRIBUTOR_MODEL, GEMMA4_MODEL]).optional(),
     openrouterKey: z
       .string()
       .regex(/^sk-or-v1-[a-zA-Z0-9_-]{16,500}$/)
@@ -86,8 +91,11 @@ export function makeSetup(template: string, input: SetupOptions) {
     CLERK_AUTHORIZED_PARTIES: origin,
     FRAME_AI_PROVIDER: "openrouter",
     OPENROUTER_API_KEY: options.openrouterKey,
-    OPENROUTER_MODEL: "meta/muse-spark-1.3-contributor",
-    OPENROUTER_MUSE_CONTRIBUTOR_ENABLED: "true",
+    OPENROUTER_MODEL: options.openrouterModel ?? MUSE_CONTRIBUTOR_MODEL,
+    OPENROUTER_MUSE_CONTRIBUTOR_ENABLED: String(
+      !options.openrouterModel ||
+        options.openrouterModel === MUSE_CONTRIBUTOR_MODEL,
+    ),
     FRAME_ERXES_ORIGIN: options.mode === "erxes" ? options.erxesOrigin! : "",
     FRAME_ERXES_TENANT: options.mode === "erxes" ? options.erxesTenant! : "",
     FRAME_ERXES_SECRET: secret,
