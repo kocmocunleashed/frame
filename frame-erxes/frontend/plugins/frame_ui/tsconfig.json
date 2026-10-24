@@ -1,0 +1,17 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "strict": true,
+    "esModuleInterop": true,
+    "paths": {
+      "erxes-ui": ["frontend/libs/erxes-ui/src"],
+      "erxes-ui/*": ["frontend/libs/erxes-ui/src/*"],
+      "ui-modules": ["frontend/libs/ui-modules/src"],
+      "ui-modules/*": ["frontend/libs/ui-modules/src/*"]
+    }
+  },
+  "files": [],
+  "include": [],
+  "references": [{ "path": "./tsconfig.app.json" }]
+}

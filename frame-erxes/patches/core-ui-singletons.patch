@@ -1,0 +1,19 @@
+diff --git a/frontend/core-ui/module-federation.config.ts b/frontend/core-ui/module-federation.config.ts
+index 166adc40..36d3430e 100644
+--- a/frontend/core-ui/module-federation.config.ts
++++ b/frontend/core-ui/module-federation.config.ts
+@@ -23,6 +23,14 @@ const coreLibraries = new Set([
+ const config: ModuleFederationConfig = {
+   name: 'core-ui',
+
++  // Nx 20 does not discover packages from Bun's text lockfile. Declare the
++  // existing singleton runtimes explicitly so remotes use the host's instances.
++  additionalShared: [
++    { libraryName: 'react', sharedConfig: { singleton: true, strictVersion: true, requiredVersion: '18.3.1' } },
++    { libraryName: 'react-dom', sharedConfig: { singleton: true, strictVersion: true, requiredVersion: '18.3.1' } },
++    { libraryName: '@apollo/client', sharedConfig: { singleton: true, strictVersion: true, requiredVersion: '^3.11.8' } },
++  ],
++
+   shared: (libraryName, defaultConfig) => {
+     if (coreLibraries.has(libraryName)) {
+       return defaultConfig;

@@ -1,0 +1,53 @@
+.credit-balance {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding: 10px 14px;
+  margin-bottom: 20px;
+  border: 1px solid #c8d2f8;
+  border-radius: 8px;
+  background: #edf1ff;
+  color: #153795;
+  font:
+    500 13px/1.5 "DM Sans Variable",
+    sans-serif;
+}
+.credit-balance strong {
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+}
+.credit-balance.credit-empty {
+  border-color: #e3b9ac;
+  background: #fff0e9;
+  color: #9b2c15;
+}
+.credit-balance small {
+  font-size: 12px;
+}
+.credit-balance button {
+  padding: 0;
+  color: inherit;
+  text-decoration: underline;
+}
+.credit-balance.credit-compact {
+  flex-wrap: nowrap;
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.credit-compact small {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+@media (max-width: 600px) {
+  .credit-compact .credit-kind {
+    display: none;
+  }
+}

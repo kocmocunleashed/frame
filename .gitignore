@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+.frame-data/
+cdk.out/
+infra/cdk.context.json
+playwright-report/
+test-results/
+frame-erxes/dist/
+*.log

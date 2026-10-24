@@ -1,0 +1,16 @@
+{
+  "environment": "staging",
+  "account": "REPLACE_AWS_ACCOUNT_ID",
+  "region": "REPLACE_SELECTED_REGION",
+  "domain": "slides.example.org",
+  "zoneName": "example.org",
+  "zoneId": "REPLACE_ROUTE53_ZONE_ID",
+  "secretArn": "REPLACE_SECRETS_MANAGER_ARN",
+  "imageTag": "REPLACE_IMMUTABLE_RELEASE_TAG",
+  "authMode": "clerk",
+  "database": "frame_staging",
+  "erxesOrigin": "",
+  "erxesTenant": "",
+  "cloudfrontPrefixListId": "pl-REPLACE_REGIONAL_CLOUDFRONT_PREFIX",
+  "bootstrap": true
+}

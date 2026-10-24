@@ -1,0 +1,36 @@
+{
+  "name": "frame_api",
+  "$schema": "../../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "backend/plugins/frame_api/src",
+  "projectType": "application",
+  "targets": {
+    "build": {
+      "executor": "nx:run-commands",
+      "options": {
+        "cwd": "backend/plugins/frame_api",
+        "command": "bun run build"
+      },
+      "dependsOn": ["^build"]
+    },
+    "serve": {
+      "executor": "nx:run-commands",
+      "options": {
+        "cwd": "backend/plugins/frame_api",
+        "command": "bun run dev"
+      }
+    },
+    "start": {
+      "executor": "nx:run-commands",
+      "options": {
+        "cwd": "backend/plugins/frame_api",
+        "command": "bun run start"
+      }
+    },
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "bunx tsc --noEmit -p backend/plugins/frame_api/tsconfig.build.json"
+      }
+    }
+  }
+}

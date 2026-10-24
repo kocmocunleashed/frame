@@ -1,0 +1,12 @@
+.git
+.agents
+.codex
+.aws
+node_modules
+dist
+.env
+.env.*
+.frame-data
+cdk.out
+playwright-report
+test-results

@@ -1,0 +1,39 @@
+{
+  "name": "frame_ui",
+  "$schema": "../../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "frontend/plugins/frame_ui/src",
+  "projectType": "application",
+  "targets": {
+    "build": {
+      "executor": "@nx/rspack:rspack",
+      "outputs": ["{options.outputPath}"],
+      "defaultConfiguration": "production",
+      "options": {
+        "target": "web",
+        "outputPath": "dist/frontend/plugins/frame_ui",
+        "main": "frontend/plugins/frame_ui/src/main.ts",
+        "tsConfig": "frontend/plugins/frame_ui/tsconfig.app.json",
+        "rspackConfig": "frontend/plugins/frame_ui/rspack.config.ts"
+      },
+      "configurations": {
+        "development": { "mode": "development" },
+        "production": {
+          "mode": "production",
+          "optimization": true,
+          "sourceMap": false
+        }
+      },
+      "dependsOn": ["^build"]
+    },
+    "serve": {
+      "executor": "@nx/rspack:module-federation-dev-server",
+      "options": { "buildTarget": "frame_ui:build:development", "port": 3019 }
+    },
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "bunx tsc --noEmit -p frontend/plugins/frame_ui/tsconfig.app.json"
+      }
+    }
+  }
+}

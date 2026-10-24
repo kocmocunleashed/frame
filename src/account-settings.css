@@ -1,0 +1,141 @@
+.modal:has(> .account-settings) {
+  width: 640px;
+  overflow: hidden;
+}
+.modal[open]:has(> .account-settings) {
+  display: flex;
+  flex-direction: column;
+}
+.modal:has(> .account-settings) .modal-head {
+  flex-shrink: 0;
+}
+.account-settings {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.account-settings .modal-form {
+  min-height: 0;
+  overflow: hidden;
+}
+.account-settings [role="tabpanel"] {
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+.account-settings-tabs {
+  display: flex;
+  gap: 8px;
+  padding: 0 0 16px;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+.account-settings-tabs button {
+  min-height: 44px;
+  padding: 10px 14px;
+  font-weight: 600;
+  border-radius: 8px;
+}
+.account-settings-tabs button[aria-selected="true"],
+.account-settings-save .button.primary {
+  background: #204bcf;
+  color: #fff;
+}
+.account-settings-tabs button:hover:not([aria-selected="true"]):not(:disabled) {
+  background: var(--inset);
+}
+.account-settings-save .button.primary:hover:not(:disabled) {
+  background: #17399f;
+}
+.account-settings-fields {
+  display: grid;
+  gap: 18px;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.account-settings .generation-preferences,
+.account-settings .agent-editor {
+  display: grid;
+  gap: 14px;
+}
+.account-settings .generation-language {
+  display: grid;
+  gap: 8px;
+}
+.account-settings input,
+.account-settings textarea {
+  width: 100%;
+  min-width: 0;
+}
+.account-settings textarea {
+  resize: vertical;
+  min-height: 220px;
+  font:
+    13px/1.6 ui-monospace,
+    monospace;
+  tab-size: 2;
+}
+.account-settings p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.account-settings small,
+.account-settings-save span {
+  font-size: 12px;
+  line-height: 1.5;
+}
+.account-settings .agent-file-actions,
+.account-settings-save {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+}
+.account-settings .agent-file-actions button,
+.account-settings .agent-import {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  font-size: 12px;
+  cursor: pointer;
+  flex-direction: row;
+}
+.account-settings .agent-import input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  width: 100%;
+  cursor: pointer;
+}
+.account-settings .agent-import:focus-within {
+  outline: 2px solid #204bcf;
+  outline-offset: 3px;
+}
+.account-settings .agent-file-actions button:hover,
+.account-settings .agent-writing-note a {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.account-settings .agent-writing-note a {
+  color: inherit;
+}
+.account-settings-save {
+  justify-content: space-between;
+  border-top: 1px solid var(--line);
+  padding-top: 18px;
+  flex-shrink: 0;
+}
+.account-settings-save span {
+  flex: 1;
+  min-width: 170px;
+}
+.account-settings :disabled {
+  cursor: not-allowed;
+}

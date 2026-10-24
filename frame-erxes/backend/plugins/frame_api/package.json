@@ -1,0 +1,14 @@
+{
+  "name": "frame_api",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "tsc --project tsconfig.build.json",
+    "dev": "tsx watch src/main.ts",
+    "start": "node dist/src/main.js"
+  },
+  "dependencies": {
+    "erxes-api-shared": "workspace:^",
+    "graphql-tag": "^2.12.6"
+  }
+}
