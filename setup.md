@@ -1,9 +1,8 @@
 # Install Frame: instructions for AI agents
 
 Follow this runbook when a user asks you to install, start, or connect Frame.
-Install the existing application and verify the requested mode. The product
-specification in `master.md` is background; an installation request is not a
-request to rebuild the application.
+Install the existing application and verify the requested mode. An installation
+request is not a request to rebuild the application.
 
 For a person doing the steps themselves, use [docs/setup.md](docs/setup.md).
 For AWS or a shared HTTPS installation, use [docs/deployment.md](docs/deployment.md)

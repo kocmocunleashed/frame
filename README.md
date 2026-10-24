@@ -2,7 +2,7 @@
 
 Frame creates editable presentations from a blank canvas, templates, or AI-assisted briefs and sources. The application includes a workspace, canvas editor, review and sharing, theme and brand libraries, presenter controls, audience questions, publications, and PDF/PNG ZIP/HTML/image-based PowerPoint exports.
 
-The supplied reference implementation was available locally, so its React renderer, editor, schemas, 46 curated themes, AI workflows, and erxes source plugins were reused. Persistence, file delivery, job transport, operational tools, and deployment definitions have been ported to MongoDB and AWS. See [master.md](master.md) for the product contract and [docs/verification.md](docs/verification.md) for measured results and outstanding gates. A build does not prove cloud or real-host deployment.
+The supplied reference implementation was available locally, so its React renderer, editor, schemas, 46 curated themes, AI workflows, and erxes source plugins were reused. Persistence, file delivery, job transport, operational tools, and deployment definitions have been ported to MongoDB and AWS. A build does not prove cloud or real-host deployment.
 
 ## Start here
 

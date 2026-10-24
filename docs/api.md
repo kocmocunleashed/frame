@@ -63,8 +63,7 @@ revocation accepts `{ id, expectedEdition }`. Live controls accept
 Grant mutations compare `expectedRole`, credit mutations compare `revision`, and
 preferences compare `baseRevision`. These are independent resource revisions.
 
-The endpoint inventory in [master.md, section 24](../master.md) identifies the
-implemented route groups. Concrete handlers and shared validators are composed
+Concrete handlers and shared validators are composed
 in `server/app.ts`, `creation.ts`, `design.ts`, `collaboration.ts`, `live.ts`,
 `publications.ts`, `exports.ts`, `uploads.ts`, and `credits.ts`. Contract tests in
 `tests/contracts.test.ts` verify canonical paging, aliases, direct jobs, errors,

@@ -21,7 +21,6 @@ await mkdir("dist", { recursive: true });
 for (const directory of ["backend", "frontend", "patches"])
   await cp(directory, `dist/${directory}`, { recursive: true });
 await cp("README.md", "dist/README.md");
-await cp("VERIFICATION.md", "dist/VERIFICATION.md");
 console.log(
   "Validated source bundles and packaged erxes plugin sources in dist/. Run Nx builds in the erxes host to produce the federation remote and backend service.",
 );

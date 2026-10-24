@@ -26,4 +26,4 @@ Restore procedure:
 5. Launch the application and test read/edit/export/publish and erxes binding before changing DNS.
 6. Record elapsed time, recovered boundary, missing objects, and validation results. Initial objectives are RPO 24 hours and RTO 4 hours; they are targets until measured in the deployed environment.
 
-No legacy dataset was supplied for this rebuild. Old-data migration is therefore not run. If one is supplied later, follow section 18 of `master.md`: export consistently, preserve stable identity mappings and hashes, preflight document sizes and duplicates, import into an empty namespace, verify access and references, stop old writers, and perform a final cutover. Do not auto-link by email or replay completed charges.
+No legacy dataset was supplied for this rebuild. Old-data migration is therefore not run. If one is supplied later, export consistently, preserve stable identity mappings and hashes, preflight document sizes and duplicates, import into an empty namespace, verify access and references, stop old writers, and perform a final cutover. Do not auto-link by email or replay completed charges.

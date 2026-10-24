@@ -87,7 +87,6 @@ media and credits use the same session resolver.
 Integration targets erxes commit `d83e2fa8e4be557bce37df0882aeb234bea74d63`.
 Use that host's compatible shared dependencies and native Nx/Rspack commands.
 The source package does not promise compatibility with every older host.
-See [VERIFICATION.md](VERIFICATION.md) for native-build and real-host status.
 
 For the supported Nx 20 host using Bun's text lockfile, include the host runtime
 sharing fix in [patches/core-ui-singletons.patch](patches/core-ui-singletons.patch).
@@ -198,9 +197,8 @@ new-tab launch with the same identity, automatic relaunch, and failed-launch ret
 
 Before enabling a real workspace, also check actual erxes gateway login,
 permissions, native remote loading, production HTTPS cookies, uploads, AI,
-exports, sharing and audience sessions. See [VERIFICATION.md](VERIFICATION.md)
-for what was actually executed. No deployment or marketplace publication is
-performed by these scripts.
+exports, sharing and audience sessions. No deployment or marketplace publication
+is performed by these scripts.
 
 For a running local host, additional checks are available:
 
