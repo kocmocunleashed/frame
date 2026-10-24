@@ -6,6 +6,13 @@ The supplied reference implementation was available locally, so its React render
 
 ## Start here
 
+**Installing with an AI agent?** Give it [setup.md](setup.md), or paste:
+
+> Install Frame from https://github.com/kocmocunleashed/frame. Read the root
+> setup.md and follow its installation and verification steps. Use my existing
+> erxes host if available; preserve existing configuration and data. Ask me for
+> any missing account access and tell me the tested URL when ready.
+
 Install **Bun 1.3.14**, **Node.js 22**, and Git, then copy and paste:
 
 ```bash

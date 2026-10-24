@@ -1,5 +1,8 @@
 # Set up Frame on a new computer
 
+For an AI agent performing the installation, use the root
+[agent setup runbook](../setup.md). This page is the walkthrough for people.
+
 These steps run Frame locally. Use Linux, macOS, or a Linux terminal in Windows
 WSL2. For a shared HTTPS deployment, use [the AWS guide](deployment.md).
 
