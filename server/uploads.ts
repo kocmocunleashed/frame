@@ -338,7 +338,7 @@ export function registerUploadRoutes(
     const intent = await uploads.get(c.req.param("id"), c.get("user"));
     const body = await c.req.formData(),
       file = body.get("file");
-    if (!(file instanceof File) || file.size !== intent.bytes)
+    if (!file || typeof file === "string" || file.size !== intent.bytes)
       throw new ApiError(400, "The file size does not match.");
     await objectStorage().put(
       "staging",
