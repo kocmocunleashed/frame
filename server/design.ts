@@ -46,7 +46,7 @@ export function registerDesignRoutes(
       if ("logo" in value && value.logo) {
         const assetId = value.logo.src.split("/").pop()!;
         const asset = (await store.db.one("assets", {
-          $and: [{ id: assetId }, { workspaceId: user.workspaceId }],
+          all: [{ id: assetId }, { workspaceId: user.workspaceId }],
         })) as {
           mime: string;
         } | null;
@@ -62,7 +62,7 @@ export function registerDesignRoutes(
     };
     const canWrite = async (user: User) => {
       const member = (await store.db.one("members", {
-        $and: [{ workspaceId: user.workspaceId }, { userId: user.id }],
+        all: [{ workspaceId: user.workspaceId }, { userId: user.id }],
       })) as {
         role: string;
       } | null;
@@ -83,7 +83,7 @@ export function registerDesignRoutes(
         await store.db.update(
           "workspaces",
           { id: user.workspaceId },
-          { $inc: { accessEpoch: 1 } },
+          { increment: { accessEpoch: 1 } },
         );
         const count = (await {
           n: await store.db.count(table, { workspaceId: user.workspaceId }),
@@ -128,7 +128,7 @@ export function registerDesignRoutes(
         now = new Date().toISOString();
       const row = await store.db.transaction(async () => {
         const previous = (await store.db.one(table, {
-          $and: [
+          all: [
             { id: c.req.param("id") },
             { ownerId: user.id },
             { workspaceId: user.workspaceId },
@@ -145,12 +145,12 @@ export function registerDesignRoutes(
           table,
           { id: previous.id },
           {
-            $set: {
+            set: {
               name: value.name,
               data: JSON.stringify(value),
               updatedAt: now,
             },
-            $inc: { revision: +1 },
+            increment: { revision: +1 },
           },
         );
         return {

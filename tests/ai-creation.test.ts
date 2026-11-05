@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { z } from "zod";
 import { zodTextFormat } from "openai/helpers/zod";
-import { Store } from "./mongo";
+import { Store } from "./postgres";
 import { createApp } from "./support/legacy-app";
 import { createAIServices } from "../server/creation";
 import { FixtureAIProvider } from "./fixtures/ai-provider";

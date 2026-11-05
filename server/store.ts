@@ -24,120 +24,53 @@ export class ApiError extends Error {
 export class Store {
   db: Database;
   constructor(
-    uri = process.env.MONGODB_URI,
-    name = process.env.MONGODB_DATABASE,
+    uri = process.env.DATABASE_URL,
+    name = "public",
   ) {
     this.db = new Database(uri, name);
   }
   async migrate() {
     await this.db.migrate();
   }
-  async createUser(
-    name: string,
-    email: string,
-    _unused = "",
-    id: string = uid(),
-  ): Promise<User> {
-    const workspaceId = uid(),
-      now = new Date().toISOString();
-    email = email.trim().toLowerCase();
+  async createUser(name: string, email: string, _unused = "", id: string = uid()): Promise<User> {
     return this.db.transaction(async () => {
-      const existing = await this.user(id);
-      if (existing) return existing;
-      if (await this.db.one("users", { email }))
-        throw new ApiError(
-          409,
-          "An unrelated account already uses this email. Accounts are never linked by email.",
-        );
-      await this.db.insert("users", {
-        id,
-        name,
-        email,
-        workspaceId,
-        createdAt: now,
-        updatedAt: now,
-      });
-      await this.db.insert("workspaces", {
-        id: workspaceId,
-        ownerId: id,
-        name: `${name.split(" ")[0]}’s workspace`,
-        accessEpoch: 0,
-        createdAt: now,
-      });
-      await this.db.insert("members", {
-        workspaceId,
-        userId: id,
-        role: "owner",
-      });
-      await this.db.insert("presentationCredits", {
-        userId: id,
-        remaining: null,
-        revision: 0,
-        updatedAt: now,
-      });
-      await this.db.insert("jobQuotas", {
-        id,
-        active: 0,
-        live: 0,
-        revision: 0,
-      });
-      return { id, name, email, workspaceId };
+      if (!(await this.db.one("users", { id }))) {
+        email = email.trim().toLowerCase();
+        if (await this.db.one("users", { email })) throw new ApiError(409, "An account already uses this email. Sign in to your existing account.");
+        await this.db.insert("users", { id, name, email });
+      }
+      return this.ensureWorkspace(id);
+    })();
+  }
+  async ensureWorkspace(id: string): Promise<User> {
+    return this.db.transaction(async () => {
+      const row = await this.db.one("users", { id });
+      if (!row) throw new ApiError(404, "Account not found.");
+      if (row.workspaceId) return (await this.user(id))!;
+      const workspaceId = uid(), now = new Date().toISOString();
+      await this.db.insert("workspaces", { id: workspaceId, ownerId: id, name: `${row.name.split(" ")[0]}’s workspace`, accessEpoch: 0, createdAt: now });
+      await this.db.insert("members", { workspaceId, userId: id, role: "owner" });
+      await this.db.insert("presentationCredits", { userId: id, remaining: null, revision: 0, updatedAt: now });
+      await this.db.insert("jobQuotas", { id, active: 0, live: 0, revision: 0 });
+      await this.db.update("users", { id }, { set: { workspaceId } });
+      return { id, name: row.name, email: row.email, workspaceId };
     })();
   }
   async user(id: string): Promise<User | undefined> {
     const row = await this.db.one("users", { id });
-    return row
-      ? {
-          id: row.id,
-          name: row.name,
-          email: row.email,
-          workspaceId: row.workspaceId,
-        }
-      : undefined;
-  }
-  async ensureAuthUser(identity: {
-    id: string;
-    name: string;
-    email: string;
-    issuer?: string;
-    subject?: string;
-    imported?: boolean;
-  }): Promise<User> {
-    return this.db.transaction(async () => {
-      const key = {provider: 'clerk', issuer: identity.issuer || 'clerk', subject: identity.subject || identity.id};
-      const mapping = await this.db.one('authIdentities', key);
-      if(mapping){const mapped=await this.user(mapping.userId);if(!mapped)throw new ApiError(409,'This identity has an unresolved workspace mapping.');return mapped;}
-      const current = await this.user(identity.id);
-      if (current) {
-        if(!identity.imported)throw new ApiError(409,'This account has no matching verified identity mapping.');
-        await this.db.insert('authIdentities',{...key,userId:current.id});
-        return current;
-      }
-      const user = await this.createUser(
-        identity.name,
-        identity.email,
-        "",
-        identity.id,
-      );
-      await this.db.insert("authIdentities", {
-        ...key,
-        userId: user.id,
-      });
-      await this.seed(user);
-      return user;
-    })();
+    return row?.workspaceId ? { id: row.id, name: row.name, email: row.email, workspaceId: row.workspaceId } : undefined;
   }
   async role(id: string, user: User): Promise<AccessRole | null> {
     const row = await this.db.one("decks", {
       id,
-      deletedAt: { $exists: false },
+      deletedAt: { present: false },
     });
     if (!row) return null;
-    if (row.ownerId === user.id) return "owner";
     const member = await this.db.one("members", {
       workspaceId: row.workspaceId,
       userId: user.id,
     });
+    if (row.ownerId === user.id && member) return "owner";
     const grant = await this.db.one("collaborators", {
       deckId: id,
       userId: user.id,
@@ -162,7 +95,7 @@ export class Store {
       );
     // Revocation and a committing mutation both write this guard inside their transaction.
     if (this.db.inTransaction)
-      await this.db.update("decks", { id }, { $inc: { accessEpoch: 1 } });
+      await this.db.update("decks", { id }, { increment: { accessEpoch: 1 } });
     return role;
   }
   async snapshot(document: FrameDocument): Promise<string> {
@@ -172,60 +105,10 @@ export class Store {
         413,
         "This presentation exceeds the 32 MiB document limit. Split it into smaller presentations.",
       );
-    const { slides, ...metadata } = doc;
-    const metadataContentId = await this.db.contentPut(
-      doc.workspaceId,
-      JSON.stringify(metadata),
-    );
-    const slideRefs = [];
-    for (const slide of slides)
-      slideRefs.push({
-        id: slide.id,
-        contentId: await this.db.contentPut(
-          doc.workspaceId,
-          JSON.stringify(slide),
-        ),
-      });
-    const id = uid();
-    await this.db.raw
-      .collection("snapshots")
-      .insertOne({
-        _id: id as any,
-        workspaceId: doc.workspaceId,
-        schemaVersion: doc.version,
-        metadataContentId,
-        slideRefs,
-        createdAt: new Date(),
-      });
-    return id;
+    return this.db.snapshotPut(doc);
   }
   async readSnapshot(id: string): Promise<FrameDocument> {
-    await this.db.ready;
-    const root = await this.db.raw
-      .collection("snapshots")
-      .findOne({ _id: id as any });
-    if (!root) throw new ApiError(404, "Presentation snapshot not found.");
-    const metadata = await this.db.contentRead(
-      root.metadataContentId,
-      root.workspaceId,
-    );
-    let bytes = Buffer.byteLength(metadata);
-    const slides = [];
-    if (root.slideRefs.length > 200)
-      throw new Error("Invalid snapshot slide count.");
-    for (const ref of root.slideRefs) {
-      const text = await this.db.contentRead(ref.contentId, root.workspaceId);
-      bytes += Buffer.byteLength(text);
-      if (bytes > MAX_DOCUMENT_BYTES)
-        throw new ApiError(
-          413,
-          "Presentation exceeds the document size limit.",
-        );
-      const slide = JSON.parse(text);
-      if (slide.id !== ref.id) throw new Error("Invalid slide reference.");
-      slides.push(slide);
-    }
-    return documentSchema.parse({ ...JSON.parse(metadata), slides });
+    return this.db.snapshotRead(id);
   }
   async access(id: string, user: User, write = false): Promise<FrameDocument> {
     await this.requireAccess(id, user, write);
@@ -282,9 +165,9 @@ export class Store {
           {
             id: doc.id,
             revision: doc.revision - 1,
-            deletedAt: { $exists: false },
+            deletedAt: { present: false },
           },
-          { $set: metadata },
+          { set: metadata },
         )
       ).changes
     )
@@ -302,13 +185,18 @@ export class Store {
     });
     await this.db.remove("revisions", {
       deckId: doc.id,
-      revision: { $lt: doc.revision - 79 },
+      revision: { lessThan: doc.revision - 79 },
     });
   }
   async write(doc: FrameDocument) {
     await this.validateAssets(doc);
     const snapshotId = await this.snapshot(doc);
-    await this.db.transaction(() => this.attach(doc, snapshotId))();
+    await this.db.transaction(async () => {
+      await this.db.update("workspaces", { id: doc.workspaceId }, { increment: { accessEpoch: 1 } });
+      const member = await this.db.one("members", { workspaceId: doc.workspaceId, userId: doc.ownerId });
+      if (!member || member.role === "viewer") throw new ApiError(403, "Editor access is required to create a presentation.");
+      await this.attach(doc, snapshotId);
+    })();
   }
   async create(
     user: User,
@@ -317,6 +205,8 @@ export class Store {
     themeId: string,
     theme?: Theme,
   ) {
+    const member = await this.db.one("members", { workspaceId: user.workspaceId, userId: user.id });
+    if (!member || member.role === "viewer") throw new ApiError(403, "Editor access is required to create a presentation.");
     let doc = makeDocument(
       user.id,
       user.workspaceId,
@@ -340,39 +230,31 @@ export class Store {
     const heads = await this.db.find(
       "decks",
       {
-        $or: [
-          { ownerId: user.id },
-          { workspaceId: { $in: memberships.map((m) => m.workspaceId) } },
-          { id: { $in: grants.map((g) => g.deckId) } },
+        any: [
+          { workspaceId: { inList: memberships.map((m) => m.workspaceId) } },
+          { id: { inList: grants.map((g) => g.deckId) } },
         ],
-        deletedAt: { $exists: false },
+        deletedAt: { present: false },
         ...(page?.after
           ? {
-              $and: [
+              all: [
                 {
-                  $or: [
-                    { updatedAt: { $lt: page.after[0] } },
-                    { updatedAt: page.after[0], id: { $gt: page.after[1] } },
+                  any: [
+                    { updatedAt: { lessThan: page.after[0] } },
+                    { updatedAt: page.after[0], id: { greaterThan: page.after[1] } },
                   ],
                 },
               ],
             }
           : {}),
       },
-      { sort: { updatedAt: -1, _id: 1 }, limit: page?.limit || 200 },
+      { sort: { updatedAt: -1, id: 1 }, limit: page?.limit || 200 },
     );
     const out = [];
     for (const head of heads) {
       const root = await this.db.one("snapshots", { id: head.headSnapshotId });
-      const metadata = JSON.parse(
-        await this.db.contentRead(root.metadataContentId, head.workspaceId),
-      );
-      const slide = JSON.parse(
-        await this.db.contentRead(
-          root.slideRefs[0].contentId,
-          head.workspaceId,
-        ),
-      );
+      const metadata = root.metadata;
+      const slide = (await this.db.one("slides", { snapshotId: head.headSnapshotId }, { sort: { position: 1 } })).content;
       const role = await this.requireAccess(head.id, user);
       const projection = publicProjection(
         { ...metadata, slides: [slide] },
@@ -526,17 +408,17 @@ export class Store {
       await this.db.update(
         "decks",
         { id },
-        { $set: { deletedAt: now }, $inc: { accessEpoch: 1 } },
+        { set: { deletedAt: now }, increment: { accessEpoch: 1 } },
       );
       await this.db.update(
         "publications",
         { deckId: id },
-        { $set: { active: false, revokedAt: now } },
+        { set: { active: false, revokedAt: now } },
       );
       await this.db.update(
         "liveSessions",
         { deckId: id, endedAt: null },
-        { $set: { endedAt: now }, $inc: { version: 1 } },
+        { set: { endedAt: now }, increment: { version: 1 } },
       );
       await this.db.insert("deletionTombstones", {
         deckId: id,

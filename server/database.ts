@@ -1,534 +1,503 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import {
-  MongoClient,
-  type ClientSession,
-  type Document,
-  Binary,
-} from "mongodb";
 import { createHash, randomUUID } from "node:crypto";
-import { indexDefinitions, MIGRATION_VERSION } from "./repositories/indexes";
+import { Pool } from "pg";
+import { Pool as NeonPool, neonConfig } from "@neondatabase/serverless";
+import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
+import { migrate } from "drizzle-orm/node-postgres/migrator";
+import { readMigrationFiles } from "drizzle-orm/migrator";
+import {
+  and,
+  or,
+  eq,
+  ne,
+  lt,
+  lte,
+  gt,
+  inArray,
+  isNull,
+  isNotNull,
+  asc,
+  desc,
+  sql,
+  getTableColumns,
+  type SQL,
+} from "drizzle-orm";
+import { tables, type TableName } from "./db/schema";
+import { documentSchema } from "../shared/schema";
 
-const numericDates = new Set([
-  "expiresAt",
-  "leaseUntil",
-  "availableAt",
-  "lastSeen",
-  "cancelRequestedAt",
-]);
-const dates = new Set([
-  "createdAt",
-  "updatedAt",
-  "resolvedAt",
-  "revokedAt",
-  "endedAt",
-  "deletedAt",
-  "sentAt",
-  "appliedAt",
-  "windowStart",
-  ...numericDates,
-]);
-const largeFields: Record<string, string[]> = {
-  jobs: ["payload", "result"],
-  creationDrafts: ["data"],
-  sources: ["text"],
-  compositions: ["elements"],
-  themes: ["data"],
-  brandKits: ["data"],
-};
 export const contentHash = (bytes: Uint8Array | string) =>
   createHash("sha256").update(bytes).digest("hex");
 export const MAX_DOCUMENT_BYTES = 32 * 1024 * 1024;
-/** MongoDB unit of work. No SQL, protocol emulation, or process-local persistence. */
+export type Predicate = Record<string, unknown>;
+type Patch = {
+  set?: Record<string, unknown>;
+  insertValues?: Record<string, unknown>;
+  increment?: Record<string, number>;
+};
+type QueryOptions = {
+  sort?: Record<string, number>;
+  limit?: number;
+  skip?: number;
+  hydrateSnapshot?: boolean;
+  upsert?: boolean;
+};
+const migrationsFolder = new URL("../drizzle", import.meta.url).pathname;
+
+/** Relational repositories share the current SQL transaction across services. */
 export class Database {
-  readonly client: MongoClient;
-  readonly name: string;
+  readonly client: Pool;
+  readonly orm: NodePgDatabase<typeof tables>;
   readonly ready: Promise<void>;
   readonly ephemeral = false;
-  private context = new AsyncLocalStorage<ClientSession>();
-  constructor(
-    uri = process.env.MONGODB_URI,
-    name = process.env.MONGODB_DATABASE,
-  ) {
-    if (!uri || !/^mongodb(\+srv)?:\/\//.test(uri))
-      throw new Error(
-        "Set MONGODB_URI to a MongoDB replica-set connection string.",
-      );
-    this.name =
-      name ||
-      new URL(
-        uri.replace("mongodb+srv:", "http:").replace("mongodb:", "http:"),
-      ).pathname.slice(1) ||
-      "frame_dev";
-    this.client = new MongoClient(uri, {
-      maxPoolSize: 20,
-      serverSelectionTimeoutMS: 5000,
-      retryWrites: true,
+  readonly name: string;
+  private context = new AsyncLocalStorage<NodePgDatabase<typeof tables>>();
+  constructor(uri = process.env.DATABASE_URL, namespace = "public") {
+    if (!uri || !/^postgres(?:ql)?:\/\//.test(uri))
+      throw new Error("Set DATABASE_URL to a PostgreSQL connection string.");
+    if (!/^[a-z][a-z0-9_]{0,62}$/.test(namespace))
+      throw new Error("Invalid database namespace.");
+    this.name = namespace;
+    neonConfig.webSocketConstructor = WebSocket;
+    const url = new URL(uri),
+      isNeon = url.hostname.endsWith(".neon.tech");
+    // Frame owns a small long-lived pool. Direct endpoints support migration locks and session settings.
+    if (isNeon) url.hostname = url.hostname.replace("-pooler.", ".");
+    const Driver = isNeon ? NeonPool : Pool;
+    this.client = new Driver({
+      connectionString: url.toString(),
+      max: 8,
+      connectionTimeoutMillis: 10000,
+      idleTimeoutMillis: 10000,
+      ...(namespace === "public"
+        ? {}
+        : { options: `-c search_path=${namespace}` }),
+    }) as unknown as Pool;
+    this.client.on("error", () => {
+      /* Requests report connection failures without logging credentials. */
     });
-    this.ready = this.client.connect().then(async () => {
-      const hello = await this.client.db().admin().command({ hello: 1 });
-      if (!hello.setName && hello.msg !== "isdbgrid")
-        throw new Error("Frame requires a MongoDB replica set.");
-    });
-  }
-  get raw() {
-    return this.client.db(this.name);
-  }
-  get options() {
-    return this.context.getStore() ? { session: this.context.getStore() } : {};
+    this.orm = drizzle(this.client, { schema: tables });
+    this.ready = this.client
+      .query(
+        namespace === "public"
+          ? "SELECT 1"
+          : `CREATE SCHEMA IF NOT EXISTS "${namespace}"`,
+      )
+      .then(() => {});
   }
   get inTransaction() {
     return !!this.context.getStore();
   }
-  private filter(input: any): any {
-    if (
-      input instanceof Date ||
-      input instanceof RegExp ||
-      input === null ||
-      typeof input !== "object"
-    )
-      return input;
-    if (Array.isArray(input)) return input.map((v) => this.filter(v));
-    return Object.fromEntries(
-      Object.entries(input).map(([key, value]) => {
-        const k = key === "id" ? "_id" : key;
-        const convert = (v: any, op = ""): any => {
-          if (v === null || op === "$exists" || op === "$type") return v;
-          if (Array.isArray(v)) return v.map((x) => convert(x));
-          if (typeof v === "object" && !(v instanceof Date))
-            return Object.fromEntries(
-              Object.entries(v).map(([operator, x]) => [
-                operator,
-                convert(x, operator),
-              ]),
-            );
-          return new Date(v);
-        };
-        return [k, dates.has(key) ? convert(value) : this.filter(value)];
-      }),
+  get query() {
+    return this.context.getStore() || this.orm;
+  }
+  table(name: string) {
+    if (!Object.hasOwn(tables, name))
+      throw new Error(`Unknown repository: ${name}`);
+    return tables[name as TableName];
+  }
+  private column(name: string, field: string): any {
+    const columns = getTableColumns(this.table(name));
+    if (!Object.hasOwn(columns, field))
+      throw new Error(`Unknown field in ${name}: ${field}`);
+    return (columns as any)[field];
+  }
+  private value(column: any, value: any): any {
+    if (value == null) return value;
+    if (column.dataType === "date") return new Date(value);
+    if (column.dataType === "json" && typeof value === "string")
+      return JSON.parse(value);
+    return value;
+  }
+  private where(name: string, predicate: Predicate = {}): SQL {
+    const parts: SQL[] = [];
+    for (const [key, value] of Object.entries(predicate)) {
+      if (key === "all" || key === "any") {
+        if (!Array.isArray(value))
+          throw new Error("Invalid repository predicate.");
+        parts.push(
+          (key === "all" ? and : or)(
+            ...value.map((v) => this.where(name, v)),
+          ) || sql`${key === "all"}`,
+        );
+        continue;
+      }
+      const col = this.column(name, key),
+        convert = (v: unknown) => this.value(col, v);
+      if (
+        value &&
+        typeof value === "object" &&
+        !(value instanceof Date) &&
+        !Array.isArray(value)
+      ) {
+        for (const [operator, operand] of Object.entries(value)) {
+          switch (operator) {
+            case "inList":
+              parts.push(
+                Array.isArray(operand) && operand.length
+                  ? inArray(col, operand.map(convert))
+                  : sql`false`,
+              );
+              break;
+            case "present":
+              parts.push(operand ? isNotNull(col) : isNull(col));
+              break;
+            case "notEqual":
+              parts.push(
+                operand === null
+                  ? isNotNull(col)
+                  : or(ne(col, convert(operand)), isNull(col))!,
+              );
+              break;
+            case "lessThan":
+              parts.push(lt(col, convert(operand)));
+              break;
+            case "atMost":
+              parts.push(lte(col, convert(operand)));
+              break;
+            case "greaterThan":
+              parts.push(gt(col, convert(operand)));
+              break;
+            case "containsInsensitive":
+              parts.push(
+                sql`${col} ILIKE ${"%" + String(operand).replace(/[\\%_]/g, "\\$&") + "%"}`,
+              );
+              break;
+            default:
+              throw new Error(`Unknown repository comparison: ${operator}`);
+          }
+        }
+      } else parts.push(value == null ? isNull(col) : eq(col, convert(value)));
+    }
+    return and(...parts) || sql`true`;
+  }
+  private order(name: string, order: Record<string, number> = { id: 1 }) {
+    return Object.entries(order).map(([field, direction]) =>
+      direction < 0
+        ? desc(this.column(name, field))
+        : asc(this.column(name, field)),
     );
   }
-  private async encode(collection: string, value: any) {
-    const row: any = { ...value };
-    if (["publications", "liveSessions"].includes(collection) && row.document) {
-      const doc = JSON.parse(row.document);
-      row.snapshotId = await this.snapshotPut(doc);
+  private async encode(name: string, value: Record<string, any>) {
+    const row = { ...value };
+    if ((name === "publications" || name === "liveSessions") && row.document) {
+      row.snapshotId = await this.snapshotPut(JSON.parse(row.document));
       delete row.document;
     }
-    if ("id" in row) {
-      row._id = row.id;
-      delete row.id;
+    if (name === "jobs" && row.payload) {
+      const payload =
+        typeof row.payload === "string" ? JSON.parse(row.payload) : row.payload;
+      if (
+        payload.workflowVersion !== undefined &&
+        row.workflowVersion === undefined
+      )
+        row.workflowVersion = payload.workflowVersion;
+      if (payload.draftId !== undefined && row.draftId === undefined)
+        row.draftId = payload.draftId;
     }
-    for (const k of dates) if (row[k] != null) row[k] = new Date(row[k]);
-    for (const field of largeFields[collection] || []) {
-      if (field in row && row[field] === null) row[field + "ContentId"] = null;
-      if (row[field] != null) {
-        const text =
-          typeof row[field] === "string"
-            ? row[field]
-            : JSON.stringify(row[field]);
-        row[field + "ContentId"] = await this.contentPut(
-          row.workspaceId || row.ownerId || "system",
-          text,
-        );
-        if (field === "payload") {
-          const payload = JSON.parse(text);
-          row.workflowVersion = payload.workflowVersion;
-          row.draftId = payload.draftId;
-        }
-        delete row[field];
-      }
-    }
-    return row;
+    return Object.fromEntries(
+      Object.entries(row)
+        .filter(([, v]) => v !== undefined)
+        .map(([key, value]) => [
+          key,
+          this.value(this.column(name, key), value),
+        ]),
+    );
   }
   private async decode(
-    collection: string,
-    value: any,
+    name: string,
+    input: any,
     hydrateSnapshot = true,
   ): Promise<any> {
-    if (!value) return null;
-    const row: any = { ...value };
-    if ("_id" in row) {
-      row.id = row._id;
-      delete row._id;
+    if (!input) return null;
+    const row = { ...input };
+    for (const [key, col] of Object.entries(
+      getTableColumns(this.table(name)),
+    )) {
+      if (row[key] instanceof Date) row[key] = row[key].toISOString();
+      if (
+        col.dataType === "json" &&
+        row[key] != null &&
+        !["snapshots", "slides", "uploadIntents"].includes(name)
+      )
+        row[key] = JSON.stringify(row[key]);
     }
-    for (const k of dates)
-      if (row[k] instanceof Date)
-        row[k] = numericDates.has(k) ? row[k].getTime() : row[k].toISOString();
-    for (const field of largeFields[collection] || [])
-      if (row[field + "ContentId"])
-        row[field] = await this.contentRead(row[field + "ContentId"]);
     if (
       hydrateSnapshot &&
-      ["publications", "liveSessions"].includes(collection) &&
+      (name === "publications" || name === "liveSessions") &&
       row.snapshotId
     )
       row.document = JSON.stringify(await this.snapshotRead(row.snapshotId));
     return row;
   }
-  async snapshotPut(doc: any) {
-    const { slides, ...metadata } = doc;
-    const metadataContentId = await this.contentPut(
-      doc.workspaceId,
-      JSON.stringify(metadata),
-    );
-    const slideRefs = [];
-    for (const slide of slides)
-      slideRefs.push({
-        id: slide.id,
-        contentId: await this.contentPut(
-          doc.workspaceId,
-          JSON.stringify(slide),
-        ),
-      });
-    const id = randomUUID();
-    await this.raw.collection("snapshots").insertOne({
-      _id: id as any,
-      workspaceId: doc.workspaceId,
-      schemaVersion: doc.version,
-      metadataContentId,
-      slideRefs,
-      createdAt: new Date(),
-    });
-    return id;
-  }
-  async snapshotRead(id: string) {
-    await this.ready;
-    const root = await this.raw
-      .collection("snapshots")
-      .findOne({ _id: id as any });
-    if (!root) throw new Error("Missing snapshot.");
-    const metadata = JSON.parse(
-      await this.contentRead(root.metadataContentId, root.workspaceId),
-    );
-    const slides = [];
-    let size = Buffer.byteLength(JSON.stringify(metadata));
-    for (const ref of root.slideRefs) {
-      const text = await this.contentRead(ref.contentId, root.workspaceId);
-      size += Buffer.byteLength(text);
-      if (size > MAX_DOCUMENT_BYTES) throw new Error("Oversized snapshot.");
-      slides.push(JSON.parse(text));
-    }
-    return { ...metadata, slides };
-  }
   async one(
-    collection: string,
-    filter: any = {},
-    options: any = {},
+    name: string,
+    predicate: Predicate = {},
+    options: QueryOptions = {},
   ): Promise<any> {
-    await this.ready;
-    const { hydrateSnapshot = true, ...queryOptions } = options;
-    return this.decode(
-      collection,
-      await this.raw
-        .collection(collection)
-        .findOne(this.filter(filter), { ...queryOptions, ...this.options }),
-      hydrateSnapshot,
+    return (
+      (await this.find(name, predicate, { ...options, limit: 1 }))[0] || null
     );
   }
   async find(
-    collection: string,
-    filter: any = {},
-    options: any = {},
+    name: string,
+    predicate: Predicate = {},
+    options: QueryOptions = {},
   ): Promise<any[]> {
     await this.ready;
-    const { sort, limit = 1000, skip = 0, ...rest } = options;
-    const rows = await this.raw
-      .collection(collection)
-      .find(this.filter(filter), { ...rest, ...this.options })
-      .sort(sort || { _id: 1 })
-      .skip(skip)
-      .limit(limit)
-      .toArray();
-    const out = [];
-    for (const row of rows) out.push(await this.decode(collection, row));
-    return out;
-  }
-  async count(collection: string, filter: any = {}) {
-    await this.ready;
-    return this.raw
-      .collection(collection)
-      .countDocuments(this.filter(filter), this.options);
-  }
-  async insert(collection: string, value: any) {
-    await this.ready;
-    const row = await this.encode(collection, { id: randomUUID(), ...value });
-    await this.raw.collection(collection).insertOne(row, this.options);
-    return { changes: 1 };
-  }
-  async update(collection: string, filter: any, patch: any, options: any = {}) {
-    await this.ready;
-    const update: any = { ...patch };
-    if (update.$set) update.$set = await this.encode(collection, update.$set);
-    if (update.$setOnInsert)
-      update.$setOnInsert = await this.encode(collection, update.$setOnInsert);
-    if (options.upsert) {
-      update.$setOnInsert ||= {};
-      if (!update.$setOnInsert._id && !update.$set?._id)
-        update.$setOnInsert._id =
-          filter.id || contentHash(collection + JSON.stringify(filter));
-    }
-    const result = await this.raw
-      .collection(collection)
-      .updateMany(this.filter(filter), update, { ...options, ...this.options });
-    return { changes: result.modifiedCount + result.upsertedCount };
-  }
-  async atomic(collection: string, filter: any, patch: any, options: any = {}) {
-    await this.ready;
-    const update = { ...patch };
-    if (update.$set) update.$set = await this.encode(collection, update.$set);
-    if (update.$setOnInsert)
-      update.$setOnInsert = await this.encode(collection, update.$setOnInsert);
-    if (options.upsert) {
-      update.$setOnInsert ||= {};
-      if (!update.$setOnInsert._id && !update.$set?._id)
-        update.$setOnInsert._id =
-          filter.id || contentHash(collection + JSON.stringify(filter));
-    }
-    return this.decode(
-      collection,
-      await this.raw
-        .collection(collection)
-        .findOneAndUpdate(this.filter(filter), update, {
-          ...options,
-          returnDocument: "after",
-          ...this.options,
-        }),
+    const rows = await this.query
+      .select()
+      .from(this.table(name))
+      .where(this.where(name, predicate))
+      .orderBy(...this.order(name, options.sort))
+      .limit(options.limit ?? 1000)
+      .offset(options.skip || 0);
+    return Promise.all(
+      rows.map((row) => this.decode(name, row, options.hydrateSnapshot)),
     );
   }
-  async remove(collection: string, filter: any) {
+  async count(name: string, predicate: Predicate = {}) {
     await this.ready;
-    const r = await this.raw
-      .collection(collection)
-      .deleteMany(this.filter(filter), this.options);
-    return { changes: r.deletedCount };
+    const [row] = await this.query
+      .select({ n: sql<number>`count(*)::int` })
+      .from(this.table(name))
+      .where(this.where(name, predicate));
+    return row.n;
   }
-  async aggregate(collection: string, pipeline: Document[]) {
+  async insert(name: string, value: Record<string, unknown>) {
     await this.ready;
-    return this.raw
-      .collection(collection)
-      .aggregate(pipeline, this.options)
-      .toArray();
+    await this.query
+      .insert(this.table(name))
+      .values((await this.encode(name, { id: randomUUID(), ...value })) as any);
+    return { changes: 1 };
+  }
+  async insertMany(name: string, values: Record<string, unknown>[]) {
+    await this.ready;
+    for (let offset = 0; offset < values.length; offset += 100) {
+      const rows = [];
+      for (const value of values.slice(offset, offset + 100))
+        rows.push(await this.encode(name, { id: randomUUID(), ...value }));
+      await this.query.insert(this.table(name)).values(rows as any);
+    }
+    return { changes: values.length };
+  }
+  private async change(
+    name: string,
+    predicate: Predicate,
+    patch: Patch,
+    options: QueryOptions,
+    single: boolean,
+  ): Promise<any[]> {
+    await this.ready;
+    const table = this.table(name),
+      values: Record<string, unknown> = await this.encode(
+        name,
+        patch.set || {},
+      );
+    for (const [key, amount] of Object.entries(patch.increment || {}))
+      values[key] = sql`coalesce(${this.column(name, key)}, 0) + ${amount}`;
+    if (options.upsert) {
+      const equalities = Object.fromEntries(
+        Object.entries(predicate).filter(
+          ([key, value]) =>
+            key !== "all" &&
+            key !== "any" &&
+            (value === null || typeof value !== "object"),
+        ),
+      );
+      const candidate: any = {
+        id: contentHash(name + JSON.stringify(predicate)),
+        ...equalities,
+        ...patch.insertValues,
+        ...patch.set,
+      };
+      for (const [key, amount] of Object.entries(patch.increment || {}))
+        candidate[key] = Number(candidate[key] || 0) + amount;
+      const inserted = await this.query
+        .insert(table)
+        .values((await this.encode(name, candidate)) as any)
+        .onConflictDoNothing()
+        .returning();
+      if (inserted.length) return inserted;
+    }
+    if (!Object.keys(values).length) return [];
+    if (single)
+      return this.query.transaction(async (tx) => {
+        const [target]: any[] = await tx
+          .select({ id: table.id })
+          .from(table)
+          .where(this.where(name, predicate))
+          .orderBy(...this.order(name, options.sort))
+          .limit(1)
+          .for("update", { skipLocked: true });
+        if (!target) return [];
+        return tx
+          .update(table)
+          .set(values)
+          .where(and(eq(table.id, target.id), this.where(name, predicate)))
+          .returning();
+      });
+    return this.query
+      .update(table)
+      .set(values)
+      .where(this.where(name, predicate))
+      .returning();
+  }
+  async update(
+    name: string,
+    predicate: Predicate,
+    patch: Patch,
+    options: QueryOptions = {},
+  ) {
+    return {
+      changes: (await this.change(name, predicate, patch, options, false))
+        .length,
+    };
+  }
+  async atomic(
+    name: string,
+    predicate: Predicate,
+    patch: Patch,
+    options: QueryOptions = {},
+  ) {
+    return this.decode(
+      name,
+      (await this.change(name, predicate, patch, options, true))[0],
+    );
+  }
+  async remove(name: string, predicate: Predicate) {
+    await this.ready;
+    return {
+      changes: (
+        await this.query
+          .delete(this.table(name))
+          .where(this.where(name, predicate))
+          .returning({ id: this.table(name).id })
+      ).length,
+    };
+  }
+  async groupedCount(name: string, field: string, predicate: Predicate) {
+    await this.ready;
+    const col = this.column(name, field);
+    return this.query
+      .select({ value: col, n: sql<number>`count(*)::int` })
+      .from(this.table(name))
+      .where(this.where(name, predicate))
+      .groupBy(col);
   }
   transaction<T>(callback: () => Promise<T> | T) {
     return async (): Promise<T> => {
       await this.ready;
-      if (this.context.getStore()) return callback();
-      for (let attempt = 0; attempt < 5; attempt++) {
-        const session = this.client.startSession();
+      if (this.inTransaction) return callback();
+      for (let attempt = 0; ; attempt++) {
         try {
-          return (await session.withTransaction(
-            () => this.context.run(session, async () => callback()),
-            {
-              readConcern: { level: "snapshot" },
-              writeConcern: { w: "majority" },
-              maxCommitTimeMS: 10000,
-              timeoutMS: 20000,
-            },
-          ))!;
+          return await this.orm.transaction(
+            (tx) => this.context.run(tx as any, async () => callback()),
+            { isolationLevel: "serializable" },
+          );
         } catch (error: any) {
-          if (error.code === 11000 && attempt < 4) continue;
-          throw error;
-        } finally {
-          await session.endSession();
+          if (
+            !["40001", "40P01", "23505"].includes(
+              error.code || error.cause?.code,
+            ) ||
+            attempt >= 4
+          )
+            throw error;
+          await Bun.sleep(10 * (attempt + 1));
         }
       }
-      throw new Error("Transaction retry budget exhausted.");
     };
   }
-  /** Immutable chunks are staged outside the short root transaction. Retain orphans until an exclusive GC is implemented. */
-  async contentPut(workspaceId: string, text: string) {
-    await this.ready;
-    const bytes = Buffer.from(text, "utf8");
-    if (bytes.length > MAX_DOCUMENT_BYTES)
+  async snapshotPut(input: unknown, snapshotId: string = randomUUID()) {
+    const doc = documentSchema.parse(input);
+    if (Buffer.byteLength(JSON.stringify(doc)) > MAX_DOCUMENT_BYTES)
       throw Object.assign(new Error("Content exceeds the 32 MiB limit."), {
         status: 413,
       });
-    const hash = contentHash(bytes);
-    const id = contentHash(workspaceId + "\0" + hash);
-    const manifests = this.raw.collection("contentManifests");
-    if (await manifests.findOne({ _id: id as any })) return id;
-    const chunks: string[] = [];
-    for (let i = 0; i < bytes.length; i += 1024 * 1024) {
-      const chunkId = id + ":" + chunks.length;
-      chunks.push(chunkId);
-      await this.raw.collection("contentChunks").updateOne(
-        { _id: chunkId as any },
-        {
-          $setOnInsert: {
-            manifestId: id,
-            ordinal: chunks.length - 1,
-            bytes: new Binary(bytes.subarray(i, i + 1024 * 1024)),
-            createdAt: new Date(),
-          },
-        },
-        { upsert: true },
-      );
-    }
-    await manifests.updateOne(
-      { _id: id as any },
-      {
-        $setOnInsert: {
-          workspaceId,
-          hash,
-          byteLength: bytes.length,
-          encoding: "utf8",
-          chunkIds: chunks,
-          createdAt: new Date(),
-        },
-      },
-      { upsert: true },
-    );
-    return id;
+    const { slides, ...metadata } = doc;
+    await this.transaction(async () => {
+      await this.insert("snapshots", {
+        id: snapshotId,
+        workspaceId: doc.workspaceId,
+        schemaVersion: doc.version,
+        metadata,
+      });
+      for (let position = 0; position < slides.length; position++)
+        await this.insert("slides", {
+          snapshotId,
+          slideId: slides[position].id,
+          position,
+          content: slides[position],
+        });
+    })();
+    return snapshotId;
   }
-  async contentRead(id: string, workspaceId?: string) {
-    await this.ready;
-    const manifest = await this.raw
-      .collection("contentManifests")
-      .findOne({ _id: id as any, ...(workspaceId ? { workspaceId } : {}) });
-    if (!manifest || manifest.byteLength > MAX_DOCUMENT_BYTES)
-      throw new Error("Invalid content manifest.");
-    const buffers: Buffer[] = [];
-    for (let i = 0; i < manifest.chunkIds.length; i++) {
-      const chunk = await this.raw
-        .collection("contentChunks")
-        .findOne({ _id: manifest.chunkIds[i], manifestId: id, ordinal: i });
-      if (!chunk) throw new Error("Missing content chunk.");
-      buffers.push(Buffer.from(chunk.bytes.buffer));
-    }
-    const bytes = Buffer.concat(buffers);
-    if (
-      bytes.length !== manifest.byteLength ||
-      contentHash(bytes) !== manifest.hash
-    )
-      throw new Error("Content integrity verification failed.");
-    return bytes.toString("utf8");
+  async snapshotRead(id: string) {
+    const root = await this.one("snapshots", { id });
+    if (!root) throw new Error("Missing presentation snapshot.");
+    const rows = await this.find(
+      "slides",
+      { snapshotId: id },
+      { sort: { position: 1 }, limit: 201 },
+    );
+    const doc = { ...root.metadata, slides: rows.map((row) => row.content) };
+    if (Buffer.byteLength(JSON.stringify(doc)) > MAX_DOCUMENT_BYTES)
+      throw new Error("Oversized snapshot.");
+    return documentSchema.parse(doc);
   }
   async migrate() {
     await this.ready;
-    const owner = randomUUID(),
-      now = new Date();
-    const lease = await this.raw
-      .collection("operationLeases")
-      .findOneAndUpdate(
-        {
-          _id: "schema" as any,
-          $or: [{ expiresAt: { $lte: now } }, { owner }],
-        },
-        {
-          $set: { owner, expiresAt: new Date(Date.now() + 120000) },
-          $inc: { token: 1 },
-        },
-        { upsert: true, returnDocument: "after" },
-      )
-      .catch((e: any) => {
-        if (e.code === 11000) throw new Error("Another migration is running.");
-        throw e;
-      });
-    let leaseLost = false;
-    const renew = async () => {
-      const result = await this.raw
-        .collection("operationLeases")
-        .updateOne(
-          {
-            _id: "schema" as any,
-            owner,
-            token: lease?.token,
-            expiresAt: { $gt: new Date() },
-          },
-          { $set: { expiresAt: new Date(Date.now() + 120000) } },
-        );
-      if (result.matchedCount !== 1)
-        throw new Error("The migration lease was lost.");
-    };
-    const heartbeat = setInterval(
-      () =>
-        void renew().catch(() => {
-          leaseLost = true;
-        }),
-      10000,
-    );
-    const checkLease = async () => {
-      if (leaseLost) throw new Error("The migration lease was lost.");
-      await renew();
-    };
+    const client = await this.client.connect();
     try {
-      const checksum = contentHash(JSON.stringify(indexDefinitions));
-      const prior = await this.one("schemaMigrations", {
-        id: String(MIGRATION_VERSION),
-      });
-      if (prior && prior.checksum !== checksum)
-        throw new Error(
-          "Migration checksum changed. Add a new migration version.",
-        );
-      // Check every unique invariant before creating any indexes. Report only
-      // collection/field names; duplicate identity data never enters logs.
-      for (const [collection, indexes] of Object.entries(indexDefinitions)) {
-        await checkLease();
-        for (const index of indexes.filter((index) => index.options?.unique)) {
-          const fields = Object.keys(index.key as Record<string, unknown>);
-          const duplicate = await this.raw
-            .collection(collection)
-            .aggregate(
-              [
-                ...(index.options?.partialFilterExpression
-                  ? [{ $match: index.options.partialFilterExpression }]
-                  : []),
-                {
-                  $group: {
-                    _id: Object.fromEntries(
-                      fields.map((field, i) => [String(i), `$${field}`]),
-                    ),
-                    count: { $sum: 1 },
-                  },
-                },
-                { $match: { count: { $gt: 1 } } },
-                { $limit: 1 },
-                { $project: { _id: 0, count: 1 } },
-              ],
-              { maxTimeMS: 30000, allowDiskUse: true },
+      await client.query("SELECT pg_advisory_lock(hashtext($1))", [
+        `frame-migrations:${this.name}`,
+      ]);
+      if (
+        (
+          await client.query("SELECT to_regclass($1) AS name", [
+            `${this.name}.__drizzle_migrations`,
+          ])
+        ).rows[0].name
+      ) {
+        const existing = await client.query(
+            `SELECT hash, created_at FROM "${this.name}".__drizzle_migrations ORDER BY created_at`,
+          ),
+          migrations = readMigrationFiles({ migrationsFolder });
+        for (const row of existing.rows)
+          if (
+            !migrations.some(
+              (m) =>
+                m.folderMillis === Number(row.created_at) &&
+                m.hash === row.hash,
             )
-            .hasNext();
-          if (duplicate)
-            throw new Error(
-              `Migration preflight found duplicates in ${collection} (${fields.join(", ")}). Resolve them before retrying.`,
-            );
-        }
+          )
+            throw new Error("Migration checksum changed. Add a new migration.");
       }
-      for (const [collection, indexes] of Object.entries(indexDefinitions)) {
-        await checkLease();
-        if (!(await this.raw.listCollections({ name: collection }).hasNext()))
-          await this.raw.createCollection(collection);
-        for (const index of indexes)
-          await this.raw
-            .collection(collection)
-            .createIndex(index.key, index.options || {});
-      }
-      await checkLease();
-      await this.update(
-        "schemaMigrations",
-        { id: String(MIGRATION_VERSION) },
-        {
-          $setOnInsert: {
-            checksum,
-            appliedAt: new Date(),
-            releaseId: process.env.FRAME_RELEASE_ID || "local",
-          },
-        },
-        { upsert: true },
-      );
+      await migrate(drizzle(client), {
+        migrationsFolder,
+        migrationsSchema: this.name,
+      });
     } finally {
-      clearInterval(heartbeat);
-      await this.raw
-        .collection("operationLeases")
-        .deleteOne({ _id: "schema" as any, owner, token: lease?.token });
+      await client.query("SELECT pg_advisory_unlock(hashtext($1))", [
+        `frame-migrations:${this.name}`,
+      ]);
+      client.release();
     }
+  }
+  async migrationReady() {
+    await this.ready;
+    const expected = readMigrationFiles({ migrationsFolder }).at(-1)!;
+    const result = await this.client.query(
+      `SELECT hash FROM "${this.name}".__drizzle_migrations WHERE created_at = $1`,
+      [expected.folderMillis],
+    );
+    return result.rows[0]?.hash === expected.hash;
   }
   async ping() {
     await this.ready;
-    await this.raw.command({ ping: 1 });
+    await this.query.execute(sql`select 1`);
     return true;
   }
   async close() {
-    await this.client.close();
+    await this.client.end();
   }
 }

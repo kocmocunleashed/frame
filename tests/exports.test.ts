@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { unzipSync, strFromU8 } from "fflate";
 import sharp from "sharp";
-import { Store } from "./mongo";
+import { Store } from "./postgres";
 import { createApp } from "./support/legacy-app";
 import { createAIServices } from "../server/creation";
 import { PublicationStore } from "../server/publications";
@@ -163,7 +163,7 @@ test("published downloads stay on their edition, retries keep the snapshot, and 
   files.push(
     `${process.env.FRAME_EXPORTS || ".frame-data/exports"}/${result.storageKey}`,
   );
-  await store.db.update("jobs",{id:html.id},{$set:{status:"succeeded",result:JSON.stringify(result)}});
+  await store.db.update("jobs",{id:html.id},{set:{status:"succeeded",result:JSON.stringify(result)}});
   const view = await publications.view(pub.id, null);
   expect(view.downloads[0].format).toBe("html");
   const link = view.downloads[0].href;

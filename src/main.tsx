@@ -1,4 +1,3 @@
-import { ClerkProvider } from "@clerk/react";
 import { createRoot } from "react-dom/client";
 import "@fontsource-variable/dm-sans";
 import "@fontsource-variable/manrope";
@@ -13,7 +12,6 @@ import "./creative.css";
 import "./slide.css";
 import "./creation.css";
 import App from "./App";
-const publishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 const root = createRoot(document.getElementById("root")!);
 root.render(
   <main className="page-error" role="status">
@@ -29,40 +27,18 @@ async function boot() {
     });
     if (!response.ok)
       throw new Error("Frame could not connect to its sign-in service.");
-    const { provider, erxesOrigin, liveAI } = (await response.json()) as {
+    const { provider, liveAI } = (await response.json()) as {
       provider: string;
-      erxesOrigin: string | null;
       liveAI?: boolean;
     };
     if (import.meta.env.DEV && provider === "fixture") {
       const { default: FixtureApp } = await import("./FixtureApp");
       root.render(<FixtureApp liveAI={liveAI} />);
-    } else if (typeof erxesOrigin === "string" && erxesOrigin) {
-      root.render(<App erxesOrigin={erxesOrigin} />);
-    } else if (erxesOrigin === null && publishableKey) {
-      root.render(
-        <ClerkProvider
-          publishableKey={publishableKey}
-          afterSignOutUrl="/signin"
-          appearance={{
-            variables: {
-              colorPrimary: "#da3b16",
-              fontFamily: "DM Sans Variable, sans-serif",
-            },
-            elements: {
-              rootBox: { width: "100%" },
-              cardBox: { width: "100%", maxWidth: "100%" },
-            },
-          }}
-        >
-          <App />
-        </ClerkProvider>,
-      );
-    } else {
+    } else if (provider === "better-auth") root.render(<App />);
+    else
       throw new Error(
-        "Frame needs its sign-in configuration. Configure erxes on the server, or set VITE_CLERK_PUBLISHABLE_KEY and rebuild.",
+        "Frame needs its standalone sign-in configuration on the server.",
       );
-    }
   } catch (error) {
     root.render(
       <main className="page-error">

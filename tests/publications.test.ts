@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { Store } from "./mongo";
+import { Store } from "./postgres";
 import { createApp } from "./support/legacy-app";
 import { PublicationStore } from "../server/publications";
 import { newElement } from "../shared/operations";

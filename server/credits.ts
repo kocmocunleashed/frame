@@ -35,11 +35,11 @@ export class PresentationCredits {
       "presentationCredits",
       { userId, revision: prior.revision },
       {
-        $set: {
+        set: {
           remaining: prior.remaining === null ? null : prior.remaining - 1,
           updatedAt: new Date().toISOString(),
         },
-        $inc: { revision: 1 },
+        increment: { revision: 1 },
       },
     );
     if (!changed.changes)
@@ -67,8 +67,8 @@ export class PresentationCredits {
         "presentationCredits",
         { userId, revision },
         {
-          $set: { remaining, updatedAt: new Date().toISOString() },
-          $inc: { revision: 1 },
+          set: { remaining, updatedAt: new Date().toISOString() },
+          increment: { revision: 1 },
         },
       );
       await this.store.db.insert("presentationCreditChanges", {
@@ -108,16 +108,15 @@ export function registerCreditRoutes(
       })
       .parse(c.req.query());
     const pageSize = 25;
-    const literal = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const filter = {
-      $or: [
-        { name: { $regex: literal, $options: "i" } },
-        { email: { $regex: literal, $options: "i" } },
+      any: [
+        { name: { containsInsensitive: query } },
+        { email: { containsInsensitive: query } },
       ],
     };
     const total = await store.db.count("users", filter);
     const records = await store.db.find("users", filter, {
-      sort: { name: 1, _id: 1 },
+      sort: { name: 1, id: 1 },
       skip: (page - 1) * pageSize,
       limit: pageSize,
     });

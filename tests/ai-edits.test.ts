@@ -10,7 +10,7 @@ import {
   type AIJob,
 } from "../shared/ai";
 import { editOperations, resolveEditScope } from "../server/ai-edits";
-import { Store } from "./mongo";
+import { Store } from "./postgres";
 import { createApp } from "./support/legacy-app";
 import { createAIServices } from "../server/creation";
 import { FixtureAIProvider } from "./fixtures/ai-provider";

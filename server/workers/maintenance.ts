@@ -14,7 +14,7 @@ try {
     "ActiveWorkers",
     await store.db.count("workerHeartbeats", {
       kind: "worker",
-      expiresAt: { $gt: Date.now() },
+      expiresAt: { greaterThan: Date.now() },
     }),
   );
   const pending = await store.db.find(

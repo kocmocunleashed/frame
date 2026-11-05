@@ -10,13 +10,11 @@ import "../account-settings.css";
 export default function AccountSettings({
   user,
   onUser,
-  externalAccountUrl,
   onBusyChange,
   initialTab = "profile",
 }: {
   user: User;
   onUser: (user: User) => void;
-  externalAccountUrl?: string;
   onBusyChange: (busy: boolean) => void;
   initialTab?: "profile" | "ai";
 }) {
@@ -156,7 +154,6 @@ export default function AccountSettings({
                 </p>
                 <AccountSecurity
                   email={user.email}
-                  externalAccountUrl={externalAccountUrl}
                 />
               </>
             ) : loading ? (

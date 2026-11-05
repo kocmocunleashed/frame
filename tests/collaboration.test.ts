@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { Store } from "./mongo";
+import { Store } from "./postgres";
 import { createApp } from "./support/legacy-app";
 import { createAIServices } from "../server/creation";
 import { Collaboration } from "../server/collaboration";
@@ -261,7 +261,7 @@ test("presence expires and revocation ends the removed editor’s session and bl
       uid(),
       doc.id,
     );
-  await store.db.update("jobs",{id:job.id},{$set:{status:"succeeded",result:JSON.stringify({ secret: "PRIVATE_RESULT" })}});
+  await store.db.update("jobs",{id:job.id},{set:{status:"succeeded",result:JSON.stringify({ secret: "PRIVATE_RESULT" })}});
   await collaboration.grant(doc.id, owner.user, {
     email: other.email,
     role: "viewer",

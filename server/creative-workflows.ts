@@ -1,5 +1,6 @@
 import { filterAsync, flatMapAsync, mapAsync } from "./async-array";
 import { createHash } from "node:crypto";
+import { canonicalJSON } from "../shared/json";
 import { z } from "zod";
 import { Store, ApiError } from "./store";
 import { JobQueue, JobFailure, type JobRow } from "./jobs";
@@ -49,7 +50,7 @@ type Context = {
   progress: (step: string, percent: number) => void | Promise<void>;
 };
 const hash = (value: unknown) =>
-  createHash("sha256").update(JSON.stringify(value)).digest("hex");
+  createHash("sha256").update(canonicalJSON(value)).digest("hex");
 const contentHash = (value: Record<string, unknown>) => {
   const { visualReviewVersion, researchVersion, ...content } = value;
   return hash(content);
@@ -126,7 +127,7 @@ export class CreativeWorkflows {
       }
       // Parents are coordinated, not leased: NULL leaseUntil excludes them
       // from the worker's expired-lease claim. Children use normal queue leases.
-      await this.store.db.update("jobs",{id:parent.id},{$set:{status:"running",leaseOwner:null,leaseUntil:null}});
+      await this.store.db.update("jobs",{id:parent.id},{set:{status:"running",leaseOwner:null,leaseUntil:null}});
       await this.advance(await this.queue.get(parent.id, owner));
       return await this.queue.get(parent.id, owner);
     })();
@@ -245,14 +246,14 @@ export class CreativeWorkflows {
           await this.advance(current);
         } catch (error) {
           if (!(error instanceof JobFailure) && !(error instanceof ApiError)) throw error;
-          await this.store.db.update("jobs",{$and:[{id:parent.id},{status:"running"}]},{$set:{status:"failed",error:error.message,updatedAt:new Date(this.queue.now()).toISOString()}});
+          await this.store.db.update("jobs",{all:[{id:parent.id},{status:"running"}]},{set:{status:"failed",error:error.message,updatedAt:new Date(this.queue.now()).toISOString()}});
           await this.queue.terminalGuard(current);
         }
       })();
   }
   private async advance(parent: JobRow) {
     await this.queue.authorized(parent);
-    await this.store.db.update("jobs",{id:parent.id,status:"running"},{$inc:{orchestrationEpoch:1}});
+    await this.store.db.update("jobs",{id:parent.id,status:"running"},{increment:{orchestrationEpoch:1}});
     const p = JSON.parse(parent.payload),
       outline = await this.outline(parent),
       count = outline?.sections.length || p.brief?.slideCount || 0;
@@ -264,7 +265,7 @@ export class CreativeWorkflows {
       outline &&
       (p.researchVersion !== 1 || research)
     ) {
-      await this.store.db.update("jobs",{$and:[{id:parent.id},{status:"running"}]},{$set:{status:"succeeded",result:JSON.stringify({
+      await this.store.db.update("jobs",{all:[{id:parent.id},{status:"running"}]},{set:{status:"succeeded",result:JSON.stringify({
             outline,
             ...(research ? { research } : {}),
             warnings: research?.warnings || [],
@@ -330,7 +331,7 @@ export class CreativeWorkflows {
     }
     if (active) {
       if (active.status === "failed" || active.status === "cancelled") {
-        await this.store.db.update("jobs",{$and:[{id:parent.id},{status:"running"}]},{$set:{status:active.status,error:active.error || "Generation was cancelled.",updatedAt:new Date(this.queue.now()).toISOString()}});
+        await this.store.db.update("jobs",{all:[{id:parent.id},{status:"running"}]},{set:{status:active.status,error:active.error || "Generation was cancelled.",updatedAt:new Date(this.queue.now()).toISOString()}});
         return;
       }
       const stage = JSON.parse(active.payload).stage as string;
@@ -344,7 +345,7 @@ export class CreativeWorkflows {
               : stage === "plan"
                 ? "Designing the visual story"
                 : `${stage.startsWith("review:") ? "Reviewing visuals for slides" : "Designing slides"} ${Number(stage.split(":")[1]) + 1}–${Math.min(count, Number(stage.split(":")[1]) + 2)}`;
-      await this.store.db.update("jobs",{$and:[{id:parent.id},{status:"running"}]},{$set:{progress:JSON.stringify(
+      await this.store.db.update("jobs",{all:[{id:parent.id},{status:"running"}]},{set:{progress:JSON.stringify(
             parent.kind === "outline"
               ? {
                   step,
@@ -444,7 +445,7 @@ export class CreativeWorkflows {
       throw new JobFailure(
         "The generated preview exceeded its size limit. Try fewer slides.",
       );
-    await this.store.db.update("jobs",{$and:[{id:parent.id},{status:"running"}]},{$set:{status:"succeeded",result:data,error:null,progress:JSON.stringify({
+    await this.store.db.update("jobs",{all:[{id:parent.id},{status:"running"}]},{set:{status:"succeeded",result:data,error:null,progress:JSON.stringify({
           step: "Ready to review",
           percent: 100,
           completedSlides: count,

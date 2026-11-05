@@ -102,7 +102,7 @@ export function registerThemeAIRoutes(
   );
   app.post("/api/theme-jobs", async (c) => {
     const user = c.get("user"),
-      role = (await store.db.one("members",{$and:[{workspaceId:user.workspaceId},{userId:user.id}]})) as {
+      role = (await store.db.one("members",{all:[{workspaceId:user.workspaceId},{userId:user.id}]})) as {
         role: string;
       } | null;
     if (!role || role.role === "viewer")
@@ -119,7 +119,7 @@ export function registerThemeAIRoutes(
         "The configured free model supports text descriptions. Remove the reference image and describe its style instead.",
       );
     if (input.referenceAssetId) {
-      const asset = (await store.db.one("assets",{$and:[{id:input.referenceAssetId},{workspaceId:user.workspaceId}]})) as {
+      const asset = (await store.db.one("assets",{all:[{id:input.referenceAssetId},{workspaceId:user.workspaceId}]})) as {
         mime: string;
         bytes: number;
       } | null;

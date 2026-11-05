@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { Store } from "./mongo";
+import { Store } from "./postgres";
 import { createApp } from "./support/legacy-app";
 import { uid, operationSchema, type Theme, type User } from "../shared/schema";
 import { THEMES, resolveFontSize, resolveTheme } from "../shared/themes";
@@ -177,7 +177,7 @@ test("saved designs are versioned, owned and separate from embedded deck snapsho
       .status,
   ).toBe(200);
   expect((await store.access(doc.id, a.user)).themeId).toBe(saved.theme.id);
-  await store.db.update("members",{userId:a.user.id},{$set:{role:"viewer"}});
+  await store.db.update("members",{userId:a.user.id},{set:{role:"viewer"}});
   expect(
     (
       await app.request(
@@ -255,7 +255,7 @@ test("brand kits validate logo asset ownership and persist colors, fonts and rul
     ).status,
   ).toBe(409);
   expect(
-    await store.db.one("schemaMigrations",{id:"1"}),
+    await store.db.migrationReady(),
   ).toBeTruthy();
 });
 test("custom-theme creation validates and embeds a snapshot in the new owned deck", async () => {

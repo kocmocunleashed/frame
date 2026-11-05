@@ -22,7 +22,6 @@ function Fixture() {
       user={account}
       onUser={setAccount}
       onSignout={() => {}}
-      externalAccountUrl="https://work.example.test"
     />
   );
 }

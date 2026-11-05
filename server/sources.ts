@@ -47,14 +47,14 @@ export class SourceStore {
     return result;
   }
   async get(id: string, user: User): Promise<SourceRecord> {
-    const row = (await this.store.db.one("sources",{$and:[{id:id},{ownerId:user.id},{workspaceId:user.workspaceId}]})) as SourceRow | null;
+    const row = (await this.store.db.one("sources",{all:[{id:id},{ownerId:user.id},{workspaceId:user.workspaceId}]})) as SourceRow | null;
     if (!row) throw new ApiError(404, "Source not found.");
     return await this.project(row);
   }
   async list(user: User): Promise<SourceRecord[]> {
     return await Promise.all(
       (
-        (await this.store.db.find("sources",{$and:[{ownerId:user.id},{workspaceId:user.workspaceId}]},{sort:{createdAt:-1},limit:100})) as SourceRow[]
+        (await this.store.db.find("sources",{all:[{ownerId:user.id},{workspaceId:user.workspaceId}]},{sort:{createdAt:-1},limit:100})) as SourceRow[]
       ).map(async (row) => await this.project(row)),
     );
   }
@@ -75,7 +75,7 @@ export class SourceStore {
     return rows;
   }
   private async limit(user: User) {
-    if(this.store.db.inTransaction)await this.store.db.update("jobQuotas",{id:user.id},{$inc:{revision:1}});
+    if(this.store.db.inTransaction)await this.store.db.update("jobQuotas",{id:user.id},{increment:{revision:1}});
     const count = (await ({n:await this.store.db.count("sources",{ownerId:user.id})})) as {
       n: number;
     };
@@ -123,7 +123,7 @@ export class SourceStore {
     await storage.put("assets", asset, bytes, mime);
     try {
       await this.store.db.transaction(async () => {
-        const member = (await this.store.db.one("members",{$and:[{userId:user.id},{workspaceId:user.workspaceId}]})) as {
+        const member = (await this.store.db.one("members",{all:[{userId:user.id},{workspaceId:user.workspaceId}]})) as {
           role: string;
         } | null;
         if (!member || member.role === "viewer")
@@ -162,7 +162,7 @@ export function registerSourceRoutes(
   );
   app.post("/api/sources", async (c) => {
     const user = c.get("user");
-    const member = (await sources.store.db.one("members",{$and:[{userId:user.id},{workspaceId:user.workspaceId}]})) as {
+    const member = (await sources.store.db.one("members",{all:[{userId:user.id},{workspaceId:user.workspaceId}]})) as {
       role: string;
     } | null;
     if (!member || member.role === "viewer")
@@ -189,13 +189,13 @@ export function registerSourceRoutes(
   app.delete("/api/sources/:id", async (c) => {
     const user = c.get("user"),
       source = await sources.get(c.req.param("id"), user);
-    const member = (await sources.store.db.one("members",{$and:[{userId:user.id},{workspaceId:user.workspaceId}]})) as {
+    const member = (await sources.store.db.one("members",{all:[{userId:user.id},{workspaceId:user.workspaceId}]})) as {
       role: string;
     } | null;
     if (!member || member.role === "viewer")
       throw new ApiError(403, "Editor access is required to remove sources.");
     if (source.jobId) await worker.cancel(source.jobId, user.id);
-    await sources.store.db.remove("sources",{$and:[{id:source.id},{ownerId:user.id}]});
+    await sources.store.db.remove("sources",{all:[{id:source.id},{ownerId:user.id}]});
     return c.json({ ok: true });
   });
 }

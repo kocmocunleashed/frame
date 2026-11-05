@@ -1,4 +1,3 @@
-import { embeddingPolicy } from "./erxes-config";
 
 /** Static assets stay on the CDN; HTML receives the deployment's runtime policy. */
 export function studioResponse(request: Request) {
@@ -7,7 +6,7 @@ export function studioResponse(request: Request) {
       status: 405,
       headers: { Allow: "GET, HEAD" },
     });
-  const policy = embeddingPolicy();
+  const policy = "frame-ancestors 'self'";
   return new Response(
     request.method === "HEAD"
       ? null

@@ -11,10 +11,17 @@ const c = configuration.parse({
   secretArn:
     "arn:aws:secretsmanager:eu-west-1:000000000000:secret:frame-fixture-AbCdEf",
   imageTag: "fixture",
-  authMode: "clerk",
-  database: "frame_staging",
   cloudfrontPrefixListId: "pl-0123456789abcdef0",
+  authProviders: ["google", "github"],
+  authEmail: true,
 });
+const defaults = configuration.parse({
+  ...c,
+  authProviders: undefined,
+  authEmail: undefined,
+});
+if (defaults.authProviders.length || defaults.authEmail)
+  throw new Error("Optional authentication services must remain opt-in.");
 const app = new App({ outdir: "/tmp/frame-cdk-check" });
 const edge = new EdgeStack(
   app,
@@ -39,6 +46,36 @@ const t = Template.fromStack(stack);
 t.resourceCountIs("AWS::ECS::Service", 3);
 t.resourceCountIs("AWS::SQS::Queue", 2);
 t.resourceCountIs("AWS::Scheduler::Schedule", 1);
+t.hasResourceProperties("AWS::ECS::TaskDefinition", {
+  ContainerDefinitions: Match.arrayWith([
+    Match.objectLike({
+      Name: "api",
+      Secrets: Match.arrayWith(
+        [
+          "GOOGLE_CLIENT_ID",
+          "GOOGLE_CLIENT_SECRET",
+          "GITHUB_CLIENT_ID",
+          "GITHUB_CLIENT_SECRET",
+          "RESEND_API_KEY",
+          "AUTH_EMAIL_FROM",
+        ].map((Name) => Match.objectLike({ Name })),
+      ),
+    }),
+  ]),
+});
+for (const resource of Object.values(
+  t.findResources("AWS::ECS::TaskDefinition"),
+))
+  for (const container of resource.Properties.ContainerDefinitions)
+    if (
+      container.Name !== "api" &&
+      container.Secrets?.some((secret: { Name: string }) =>
+        /^(GOOGLE_|GITHUB_|RESEND_|AUTH_EMAIL_FROM|BETTER_AUTH_SECRET)/.test(
+          secret.Name,
+        ),
+      )
+    )
+      throw new Error("Only API tasks may receive authentication credentials.");
 t.hasResourceProperties("AWS::ECS::Service", { DesiredCount: 2 });
 t.hasResourceProperties("AWS::S3::Bucket", {
   VersioningConfiguration: { Status: "Enabled" },

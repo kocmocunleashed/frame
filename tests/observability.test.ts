@@ -1,5 +1,5 @@
 import { test, expect, spyOn } from "bun:test";
-import { Store } from "./mongo";
+import { Store } from "./postgres";
 import { createApp } from "./support/legacy-app";
 import { uid } from "../shared/schema";
 test("readiness reports actual private storage and errors have correlatable IDs without private error messages", async () => {

@@ -58,7 +58,7 @@ async function screenshotSlides(
   for (const id of ids) {
     if (context.signal.aborted)
       throw new JobFailure("Visual review cancelled.");
-    const asset = (await store.db.one("assets",{$and:[{id:id},{workspaceId:owner.workspaceId}]})) as {
+    const asset = (await store.db.one("assets",{all:[{id:id},{workspaceId:owner.workspaceId}]})) as {
       mime: string;
       storageKey: string;
       bytes: number;

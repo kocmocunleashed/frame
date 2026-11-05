@@ -1,11 +1,14 @@
 if (process.env.NODE_ENV === "production")
   throw new Error("Fixtures refuse production.");
 const child = Bun.spawn(
-  ["node", "scripts/replica-fixture.mjs", ...process.argv.slice(2)],
-  {
-    stdout: "inherit",
-    stderr: "inherit",
-  },
+  [
+    "bun",
+    "--no-env-file",
+    "scripts/test.ts",
+    "--preview",
+    ...process.argv.slice(2),
+  ],
+  { env: process.env, stdout: "inherit", stderr: "inherit" },
 );
 for (const signal of ["SIGINT", "SIGTERM"] as const)
   process.once(signal, () => child.kill(signal));

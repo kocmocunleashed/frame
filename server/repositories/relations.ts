@@ -36,7 +36,7 @@ export async function reviewComments(db: Database, deckId: string) {
   const comments = await db.find(
     "comments",
     { deckId },
-    { sort: { createdAt: 1, _id: 1 }, limit: 1000 },
+    { sort: { createdAt: 1, id: 1 }, limit: 1000 },
   );
   const out = [];
   for (const c of comments) {
@@ -58,7 +58,7 @@ export async function activePeers(
 ) {
   const peers = await db.find(
     "presence",
-    { deckId, lastSeen: { $gt: after }, userId: { $ne: except } },
+    { deckId, lastSeen: { greaterThan: after }, userId: { notEqual: except } },
     { sort: { lastSeen: -1 }, limit: 100 },
   );
   const out = [];

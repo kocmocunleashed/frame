@@ -1,11 +1,13 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { BSON } from "mongodb";
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
-import { Database, contentHash } from "./database";
+import { contentHash } from "./database";
 import { objectStorage, type ObjectArea } from "./storage";
 import type { Store } from "./store";
-import { indexDefinitions, MIGRATION_VERSION } from "./repositories/indexes";
+import { tables } from "./db/schema";
+import { sql } from "drizzle-orm";
+const MIGRATION_VERSION = 2;
+const resources = Object.keys(tables);
 type FileEntry = {
   path: string;
   sha256: string;
@@ -16,7 +18,7 @@ type FileEntry = {
   version?: string;
 };
 export type BackupManifest = {
-  version: 1;
+  version: 2;
   schemaVersion: number;
   createdAt: string;
   encrypted: boolean;
@@ -51,7 +53,7 @@ function decrypt(bytes: Buffer, key: Buffer | null) {
 }
 function safe(root: string, path: string) {
   if (
-    !/^(collections\/[A-Za-z]+\.bson|objects\/(assets|exports)-[a-zA-Z0-9-]+)$/.test(
+    !/^(collections\/[A-Za-z]+\.json|objects\/(assets|exports)-[a-zA-Z0-9-]+)$/.test(
       path,
     )
   )
@@ -68,7 +70,7 @@ export async function backup(store: Store, directory: string) {
   await mkdir(join(directory, "objects"), { mode: 0o700 });
   const key = encryptionKey(),
     manifest: BackupManifest = {
-      version: 1,
+      version: 2,
       schemaVersion: MIGRATION_VERSION,
       createdAt: new Date().toISOString(),
       encrypted: !!key,
@@ -96,32 +98,16 @@ export async function backup(store: Store, directory: string) {
       ...extra,
     });
   };
-  // Snapshot reads share a MongoDB cluster time. Final files are immutable and physical cleanup is disabled.
-  const session = store.db.client.startSession({ snapshot: true });
-  try {
-    for (const collection of Object.keys(indexDefinitions)) {
-      const parts: Buffer[] = [];
-      let count = 0;
-      for await (const row of store.db.raw
-        .collection(collection)
-        .find({}, { session })) {
-        parts.push(Buffer.from(BSON.serialize(row)));
-        count++;
-        if (collection === "assets" && row.storageKey)
-          objects.set("assets:" + row.storageKey, {
-            area: "assets",
-            key: row.storageKey,
-            version: row.objectVersion,
-          });
-      }
-      manifest.counts[collection] = count;
-      await write(`collections/${collection}.bson`, Buffer.concat(parts), {
-        collection,
-      });
+  // All rows are read in one serializable PostgreSQL snapshot; objects are immutable.
+  await store.db.transaction(async () => {
+    for (const collection of resources) {
+      const rows = await store.db.find(collection, {}, { limit: 1000000, hydrateSnapshot: false });
+      if (rows.length !== await store.db.count(collection)) throw new Error("Backup exceeds its row limit. Use a native PostgreSQL backup for this dataset.");
+      manifest.counts[collection] = rows.length;
+      await write(`collections/${collection}.json`, Buffer.from(JSON.stringify(rows)), { collection });
+      if (collection === "assets") for (const row of rows) if (row.storageKey) objects.set("assets:" + row.storageKey, { area: "assets", key: row.storageKey, version: row.objectVersion });
     }
-  } finally {
-    await session.endSession();
-  }
+  })();
   // Job output records point to immutable exports; retain all export bytes to include every snapshot-time result.
   const storage = objectStorage();
   for await (const file of storage.list("exports"))
@@ -154,7 +140,7 @@ export async function verifyBackup(directory: string) {
     await readFile(join(directory, "manifest.json"), "utf8"),
   ) as BackupManifest;
   if (
-    manifest.version !== 1 ||
+    manifest.version !== 2 ||
     manifest.schemaVersion !== MIGRATION_VERSION ||
     !Array.isArray(manifest.files)
   )
@@ -171,23 +157,14 @@ export async function verifyBackup(directory: string) {
       throw new Error("Backup checksum verification failed.");
     const plain = decrypt(bytes, key);
     if (file.collection) {
-      if (!(file.collection in indexDefinitions))
+      if (!(file.collection in tables))
         throw new Error("Unknown backup collection.");
-      let n = 0;
-      for (let i = 0; i < plain.length;) {
-        const length = plain.readInt32LE(i);
-        if (length < 5 || i + length > plain.length)
-          throw new Error("Invalid BSON backup.");
-        BSON.deserialize(plain.subarray(i, i + length));
-        i += length;
-        n++;
-      }
-      if (n !== manifest.counts[file.collection])
-        throw new Error("Backup count mismatch.");
+      const rows = JSON.parse(plain.toString("utf8"));
+      if (!Array.isArray(rows) || rows.length !== manifest.counts[file.collection]) throw new Error("Backup count mismatch.");
     }
   }
   if (
-    Object.keys(indexDefinitions).some(
+    resources.some(
       (c) => !manifest.files.some((f) => f.collection === c),
     )
   )
@@ -197,53 +174,31 @@ export async function verifyBackup(directory: string) {
 export async function restoreBackup(store: Store, directory: string) {
   const manifest = await verifyBackup(directory);
   await store.db.ready;
-  const existing = await store.db.raw.listCollections().toArray();
-  for (const collection of existing)
-    if (await store.db.raw.collection(collection.name).countDocuments())
-      throw new Error("Restore requires an empty isolated database.");
+  for (const resource of resources) if (await store.db.count(resource)) throw new Error("Restore requires an empty isolated database.");
   const storage = objectStorage();
   for (const area of ["assets", "exports"] as const)
     for await (const _ of storage.list(area))
       throw new Error("Restore requires an empty private storage namespace.");
   const key = manifest.encrypted ? encryptionKey() : null;
-  for (const file of manifest.files) {
+  for (const file of manifest.files) if (file.area && file.key) {
     const plain = decrypt(await readFile(safe(directory, file.path)), key);
-    if (file.collection) {
-      if (
-        [
-          "erxesSessions",
-          "erxesTickets",
-          "presence",
-          "workerHeartbeats",
-          "operationLeases",
-        ].includes(file.collection)
-      )
-        continue;
-      for (let i = 0; i < plain.length;) {
-        const length = plain.readInt32LE(i);
-        const row = BSON.deserialize(plain.subarray(i, i + length));
-        i += length;
-        if (file.collection === "liveSessions" && !row.endedAt)
-          row.endedAt = new Date();
-        if (
-          file.collection === "jobs" &&
-          ["queued", "running"].includes(row.status)
-        ) {
-          row.status = "cancelled";
-          row.cancelRequestedAt = new Date();
-          row.leaseOwner = null;
-          row.leaseUntil = null;
-          row.error = "Restored backup; resume this workflow explicitly.";
-        }
-        await store.db.raw.collection(file.collection).insertOne(row);
+    await storage.put(file.area, file.key, plain);
+  }
+  await store.db.transaction(async () => {
+    await store.db.query.execute(sql`SET CONSTRAINTS ALL DEFERRED`);
+    for (const resource of resources) if (await store.db.count(resource)) throw new Error("Restore requires an empty isolated database.");
+    for (const file of manifest.files) {
+      if (!file.collection || ["sessions", "verifications", "authRateLimits", "presence", "workerHeartbeats", "operationLeases", "rateLimits"].includes(file.collection)) continue;
+      const rows = JSON.parse(decrypt(await readFile(safe(directory, file.path)), key).toString("utf8"));
+      for (const row of rows) {
+        if (file.collection === "liveSessions" && !row.endedAt) row.endedAt = new Date().toISOString();
+        if (file.collection === "jobs" && ["queued", "running"].includes(row.status)) Object.assign(row, { status: "cancelled", cancelRequestedAt: Date.now(), leaseOwner: null, leaseUntil: null, error: "Restored backup; resume this workflow explicitly." });
+        await store.db.insert(file.collection, row);
       }
-    } else if (file.area && file.key)
-      await storage.put(file.area, file.key, plain);
-  }
-  await store.migrate();
-  for (const row of await store.db.find("decks", {}, { limit: 100000 })) {
-    const doc = await store.readSnapshot(row.headSnapshotId);
-    await store.validateAssets(doc);
-  }
+    }
+    for (const row of await store.db.find("decks", {}, { limit: 1000000 })) {
+      const doc = await store.readSnapshot(row.headSnapshotId); await store.validateAssets(doc);
+    }
+  })();
   return { ok: true, collections: Object.keys(manifest.counts).length };
 }

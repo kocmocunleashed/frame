@@ -1,4 +1,5 @@
 import AccountSettings from "./AccountSettings";
+import WorkspaceManager from "./WorkspaceManager";
 import {
   lazy,
   Suspense,
@@ -89,18 +90,17 @@ export default function Workspace({
   user,
   onSignout,
   onUser,
-  externalAccountUrl,
 }: {
   user: User;
   onSignout: () => void;
   onUser: (u: User) => void;
-  externalAccountUrl?: string;
 }) {
   const creditState = useCredits();
   const profileMenuId = useId();
   const profileMenu = useRef<HTMLDivElement>(null);
   const profileButton = useRef<HTMLButtonElement>(null);
   const [settingsTab, setSettingsTab] = useState<"profile" | "ai">("profile");
+  const [workspaceName, setWorkspaceName] = useState(`${user.name.split(" ")[0]}’s workspace`);
   const [decks, setDecks] = useState<DeckSummary[]>([]),
     [folders, setFolders] = useState<FolderType[]>([]),
     [section, setSection] = useState<Section>("all"),
@@ -121,7 +121,7 @@ export default function Workspace({
     [user.id, user.workspaceId],
   );
   const [modal, setModal] = useState<
-      null | "new" | "folder" | "rename" | "delete" | "settings"
+      null | "new" | "folder" | "rename" | "delete" | "settings" | "workspaces"
     >(() =>
       new URLSearchParams(location.search).has("account") ? "settings" : null,
     ),
@@ -131,16 +131,18 @@ export default function Workspace({
   async function load() {
     setError("");
     try {
-      const [d, f, t, drafts] = await Promise.all([
+      const [d, f, t, drafts, spaces] = await Promise.all([
         api<DeckSummary[]>("/decks"),
         api<FolderType[]>("/folders"),
         api<SavedTheme[]>("/themes"),
         api<CreationDraft[]>("/creation"),
+        api<{ id: string; name: string }[]>("/workspaces"),
       ]);
       setDecks(d);
       setFolders(f);
       setSavedThemes(t);
       setCreationDrafts(drafts);
+      setWorkspaceName(spaces.find(space => space.id === user.workspaceId)?.name || "Your workspace");
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -300,12 +302,13 @@ export default function Workspace({
         <Brand />
         <button
           className="workspace-switch"
-          onClick={() => openSettings("profile")}
+          onClick={() => setModal("workspaces")}
+          aria-label="Manage workspaces"
         >
           <span className="workspace-avatar">{user.name[0].toUpperCase()}</span>
           <span>
-            {user.name.split(" ")[0]}’s workspace
-            <small>Personal workspace</small>
+            {workspaceName}
+            <small>Workspace</small>
           </span>
           <ChevronDown size={15} />
         </button>
@@ -889,7 +892,7 @@ export default function Workspace({
                   ? "Rename presentation"
                   : modal === "delete"
                     ? "Delete this presentation?"
-                    : "Your account"
+                    : modal === "workspaces" ? "Your workspaces" : "Your account"
           }
           onClose={() => {
             if (!busy) {
@@ -898,12 +901,11 @@ export default function Workspace({
             }
           }}
         >
-          {modal === "settings" ? (
+          {modal === "workspaces" ? <WorkspaceManager user={user} /> : modal === "settings" ? (
             <AccountSettings
               initialTab={settingsTab}
               user={user}
               onUser={onUser}
-              externalAccountUrl={externalAccountUrl}
               onBusyChange={setBusy}
             />
           ) : (

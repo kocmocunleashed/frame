@@ -28,6 +28,9 @@ try {
   const html = await readFile(join(directory, "slide.html"), "utf8");
   if (stopping) throw new Error("Cancelled");
   browser = await chromium.launch({
+    ...(process.env.FRAME_SERVERLESS_BROWSER === "true"
+      ? { args: (await import("@sparticuz/chromium")).default.args }
+      : {}),
     headless: true,
     timeout: 10000,
     executablePath: process.env.FRAME_CHROME_PATH || undefined,

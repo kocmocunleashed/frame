@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { Store } from "./mongo";
+import { Store } from "./postgres";
 import { createApp } from "./support/legacy-app";
 import { createAIServices } from "../server/creation";
 import { FixtureAIProvider } from "./fixtures/ai-provider";
@@ -11,10 +11,11 @@ afterEach(async () => {
 });
 test('cursor queries reach older records without repeats and retain a cursor across denied rows',async()=>{
  const store=new Store();stores.push(store);await store.testReady;
- for(let i=0;i<125;i++)await store.db.insert('pageFixture',{id:String(i).padStart(3,'0'),ownerId:'one',updatedAt:'2026-01-01T00:00:00.000Z'});
- await store.db.insert('pageFixture',{id:'foreign',ownerId:'two',updatedAt:'2026-01-02T00:00:00.000Z'});
+ const one=await store.createUser('One','one@example.test'),two=await store.createUser('Two','two@example.test');
+ for(let i=0;i<125;i++)await store.db.insert('creationDrafts',{id:String(i).padStart(3,'0'),ownerId:one.id,workspaceId:one.workspaceId,data:{},updatedAt:'2026-01-01T00:00:00.000Z'});
+ await store.db.insert('creationDrafts',{id:'foreign',ownerId:two.id,workspaceId:two.workspaceId,data:{},updatedAt:'2026-01-02T00:00:00.000Z'});
  let cursor:string|null=null;const ids:string[]=[];
- do {const page:{items:string[];nextCursor:string|null}=await collectionPage<string>(store.db,'pageFixture',{ownerId:'one'},{limit:'20',...(cursor?{cursor}:{})},row=>row.id<'020'?null:row.id);ids.push(...page.items);cursor=page.nextCursor;}while(cursor);
+ do {const page:{items:string[];nextCursor:string|null}=await collectionPage<string>(store.db,'creationDrafts',{ownerId:one.id},{limit:'20',...(cursor?{cursor}:{})},row=>row.id<'020'?null:row.id);ids.push(...page.items);cursor=page.nextCursor;}while(cursor);
  expect(ids).toHaveLength(105);expect(new Set(ids).size).toBe(105);expect(ids.at(-1)).toBe('124');expect(ids).not.toContain('foreign');
 });
 test("fresh wire contract pages lists, accepts baseRevision, returns direct jobs and retains reference compatibility", async () => {

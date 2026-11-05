@@ -1,0 +1,16 @@
+.git
+.vercel
+.agents
+.codex
+.aws
+.env
+.env.*
+!.env.example
+.frame-data
+node_modules
+dist
+cdk.out
+infra/cdk.out
+playwright-report
+test-results
+*.log

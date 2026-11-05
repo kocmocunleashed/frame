@@ -16,6 +16,7 @@ export async function signup(page: Page) {
 export async function newBlank(page: Page) {
   await page
     .getByRole("button", { name: "New presentation", exact: true })
+    .first()
     .click();
   await page
     .getByLabel("Presentation name", { exact: true })

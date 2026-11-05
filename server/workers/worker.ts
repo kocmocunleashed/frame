@@ -14,7 +14,7 @@ async function heartbeat() {
     "workerHeartbeats",
     { id: ai.queue.workerId },
     {
-      $set: {
+      set: {
         kind: "worker",
         updatedAt: new Date().toISOString(),
         expiresAt: Date.now() + 60000,
@@ -44,7 +44,7 @@ try {
         continue;
       }
       const messages = await transport.receive();
-      // MongoDB remains authoritative even after a lost transport wakeup.
+      // PostgreSQL remains authoritative even after a lost transport wakeup.
       if (!messages.length) await ai.worker.runOnce();
       for (const message of messages) {
         if (stopping) break;

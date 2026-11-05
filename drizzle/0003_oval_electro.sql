@@ -1,0 +1,1 @@
+ALTER TABLE "comments" ALTER COLUMN "slide_id" DROP NOT NULL;

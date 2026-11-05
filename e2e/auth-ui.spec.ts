@@ -1,45 +1,12 @@
 import { expect, test } from "@playwright/test";
 import { checkA11y } from "./helpers";
 
-test("missing standalone configuration is a recoverable error, not an authenticated empty workspace", async ({
-  page,
-}) => {
-  await page.route("**/api/auth/provider", (route) =>
-    route.fulfill({ json: { provider: "clerk", erxesOrigin: null } }),
-  );
+test("unsupported sign-in configuration is a recoverable error", async ({ page }) => {
+  await page.route("**/api/auth/provider", route => route.fulfill({ json: { provider: "unsupported" } }));
   await page.goto("/signin");
-  await expect(
-    page.getByRole("heading", { name: "Frame could not open" }),
-  ).toBeVisible();
-  await expect(
-    page.getByText("Configure erxes on the server", { exact: false }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Frame could not open" })).toBeVisible();
+  await expect(page.getByText("Frame needs its standalone sign-in configuration on the server.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Try again" })).toBeEnabled();
-  await checkA11y(page);
-  await page.setViewportSize({ width: 390, height: 844 });
-  expect(
-    await page.evaluate(
-      () => document.documentElement.scrollWidth <= innerWidth,
-    ),
-  ).toBe(true);
-  await checkA11y(page);
-});
-
-test("expired erxes sessions return to the configured host without loading Clerk", async ({
-  page,
-}) => {
-  await page.route("**/api/auth/provider", (route) =>
-    route.fulfill({
-      json: { provider: "erxes", erxesOrigin: "https://work.example.test" },
-    }),
-  );
-  await page.goto("/");
-  await expect(
-    page.getByRole("heading", { name: "Open Frame from erxes" }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("link", { name: "Return to erxes" }),
-  ).toHaveAttribute("href", "https://work.example.test");
   await checkA11y(page);
 });
 

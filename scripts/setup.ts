@@ -9,7 +9,7 @@ import {
 } from "../shared/openrouter-models";
 import {
   makeSetup,
-  setupOrigin,
+  databaseUrl,
   writeSetup,
   type SetupOptions,
 } from "./setup-config";
@@ -28,7 +28,7 @@ async function answer<T>(result: Promise<T>): Promise<Exclude<T, symbol>> {
 async function main() {
   if (process.argv.includes("--help")) {
     console.log(
-      "bun run setup\n\nInteractive local setup: preview, standalone Clerk, or erxes.\nCreates .env without overwriting it, masks secrets, and prints exact next commands.\nDoes not start services, migrate data, modify erxes, or send paid AI requests.\nSee docs/setup.md for the noninteractive copy-and-paste instructions.",
+      "bun run setup\n\nInteractive local setup: preview or standalone PostgreSQL.\nCreates .env without overwriting it, masks secrets, and prints exact next commands.\nDoes not start services, migrate data, send paid AI requests.\nSee docs/setup.md for the noninteractive copy-and-paste instructions.",
     );
     return;
   }
@@ -75,91 +75,38 @@ async function main() {
           hint: "no account needed; database is deleted when stopped",
         },
         {
-          value: "erxes",
-          label: "Connect an existing local erxes host",
-          hint: "real erxes login; saved work persists",
-        },
-        {
           value: "standalone",
-          label: "Standalone with Clerk",
+          label: "Standalone with built-in sign-in",
           hint: "your own sign-in; saved work persists",
         },
       ],
     }),
   );
   const options: SetupOptions = { mode, openrouterKey: "", database: "docker" };
-  if (mode === "erxes") {
-    p.note(
-      "Start your existing erxes host first. This wizard creates the Frame settings and a separate adapter env file; it does not install or overwrite the host.\nUse localhost consistently for the host and Frame.\nThe tenant is the host's authenticated subdomain (usually localhost in local development).",
-      "erxes connection",
-    );
-    options.erxesOrigin = await answer(
-      p.text({
-        message: "erxes origin",
-        defaultValue: "http://localhost:3001",
-        placeholder: "http://localhost:3001",
-        validate: (value) =>
-          setupOrigin.safeParse(value || "http://localhost:3001").success
-            ? undefined
-            : "Use http://localhost:3001 or another exact loopback origin.",
-      }),
-    );
-    options.erxesTenant = await answer(
-      p.text({
-        message: "Authenticated erxes tenant",
-        defaultValue: "localhost",
-        placeholder: "localhost",
-        validate: (value) =>
-          /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$/.test(value || "localhost")
-            ? undefined
-            : "Enter the host tenant, using letters, numbers, dots, hyphens or underscores.",
-      }),
-    );
-  }
   if (mode === "standalone") {
-    p.note(
-      "Create/select a development application at https://dashboard.clerk.com\nEnable email sign-in and email verification. Open its API keys page.\nUse both keys from that same development instance.",
-      "Clerk sign-in",
-    );
-    options.clerkPublishableKey = await answer(
-      p.text({
-        message: "Clerk publishable key",
-        placeholder: "pk_test_…",
-        validate: (value) =>
-          /^pk_test_[a-zA-Z0-9_-]+$/.test(value || "")
-            ? undefined
-            : "Use the development publishable key beginning pk_test_.",
-      }),
-    );
-    options.clerkSecretKey = await answer(
-      p.password({
-        message: "Clerk secret key (hidden)",
-        validate: (value) =>
-          /^sk_test_[a-zA-Z0-9_-]+$/.test(value || "")
-            ? undefined
-            : "Use the development secret key beginning sk_test_.",
-      }),
-    );
-  }
-  if (mode !== "preview")
     options.database = await answer(
       p.select({
-        message: "Local MongoDB",
-        initialValue: mode === "erxes" ? "existing" : "docker",
+        message: "PostgreSQL database",
         options: [
+          { value: "existing", label: "Connect Neon or existing PostgreSQL" },
           {
             value: "docker",
-            label: "Start this project's Docker Compose MongoDB",
-            hint: "port 27017 must be free",
-          },
-          {
-            value: "existing",
-            label: "Use my existing replica set",
-            hint: "127.0.0.1:27017, rs0; Frame uses its own database",
+            label: "Start local PostgreSQL with Docker Compose",
           },
         ],
       }),
     );
+    if (options.database === "existing")
+      options.databaseUrl = await answer(
+        p.password({
+          message: "PostgreSQL connection URL (hidden)",
+          validate: (value) =>
+            databaseUrl.safeParse(value).success
+              ? undefined
+              : "Use a PostgreSQL connection URL.",
+        }),
+      );
+  }
   const ai = await answer(
     p.confirm({
       message: "Connect OpenRouter for real, billable AI?",
@@ -200,24 +147,14 @@ async function main() {
   p.log.success(
     "Created .env with private file permissions. Keys were not sent to any service.",
   );
-  if (setup.adapter)
-    p.log.success(
-      "Created frame-erxes/.env.adapter with the matching server-only launch secret.",
-    );
   p.note(
     setup.commands.join("\n"),
     "Copy and run these commands from the Frame folder",
   );
-  if (mode === "erxes")
-    p.note(
-      "Next, follow docs/setup.md → Connect your local erxes host.\nInstall frame_api/frame_ui, load frame-erxes/.env.adapter on frame_api, enable frame in the host, and grant Frame User.\nThen open your erxes origin + /frame; the studio opens automatically.",
-      "Finish the host connection",
-    );
-  else
-    p.note(
-      `Open ${setup.origin}\n${mode === "preview" ? "This preview uses a test identity and an ephemeral database. Work is deleted when you stop it." : "Sign up and verify your email. Your work is stored in local MongoDB."}\n${mode === "preview" && !ai ? "Preview AI uses clearly labeled fixtures." : !ai ? "AI is unconfigured. Manual creation, editing and exports work." : "AI requests use your OpenRouter balance; Frame's unlimited presentation credits do not make provider usage free."}`,
-      "Open Frame",
-    );
+  p.note(
+    `Open ${setup.origin}\n${mode === "preview" ? "This preview uses a test identity and an ephemeral database. Work is deleted when you stop it." : "Register with your email and password. Your work is stored in PostgreSQL."}\n${mode === "preview" && !ai ? "Preview AI uses clearly labeled fixtures." : !ai ? "AI is unconfigured. Manual creation, editing and exports work." : "AI requests use your OpenRouter balance."}`,
+    "Open Frame",
+  );
   p.outro("Setup files are ready. Start the services with the commands above.");
 }
 

@@ -1,5 +1,5 @@
 import { afterEach, describe, test, expect } from "bun:test";
-import { Store } from "./mongo";
+import { Store } from "./postgres";
 import type { User } from "../shared/schema";
 import { newElement } from "../shared/operations";
 import { rmSync } from "node:fs";
@@ -22,14 +22,14 @@ describe("persistence, revisions and authorization", () => {
   test("migrations create separate records for product resources", async () => {
     const s = store();
     await s.testReady;
-    const tables = await s.db.raw.listCollections().toArray();
+    const tables = Object.keys((await import("../server/db/schema")).tables).map(name => ({ name }));
     expect(tables.map((t) => t.name)).toEqual(
       expect.arrayContaining([
         "users",
         "workspaces",
         "decks",
         "snapshots",
-        "contentChunks",
+        "slides",
         "revisions",
         "assets",
         "themes",

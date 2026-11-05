@@ -19,7 +19,7 @@ export function createApp(
     await next();
   });
   app.get("/api/auth/provider", (c) =>
-    c.json({ provider: "fixture", erxesOrigin: null, liveAI: process.env.FRAME_DEV_LIVE_AI === "true" }),
+    c.json({ provider: "fixture", liveAI: process.env.FRAME_DEV_LIVE_AI === "true" }),
   );
   app.post("/api/auth/signup", async (c) => {
     const input = z
@@ -28,17 +28,13 @@ export function createApp(
     const id = "fixture:" + contentHash(input.email.trim().toLowerCase());
     const user =
       (await store.user(id)) ||
-      (await store.ensureAuthUser({
-        id,
-        ...input,
-        issuer: "fixture",
-        subject: id,
-      }));
+      (await store.createUser(input.name, input.email, "", id));
+    if (!(await store.db.count("decks", { ownerId: user.id }))) await store.seed(user);
     const token = crypto.randomUUID() + crypto.randomUUID();
-    await store.db.insert("fixtureSessions", {
-      tokenHash: contentHash(token),
+    await store.db.insert("sessions", {
+      token: contentHash(token),
       userId: user.id,
-      expiresAt: Date.now() + 3600000,
+      expiresAt: new Date(Date.now() + 3600000),
     });
     setCookie(c, "frame_fixture", token, {
       httpOnly: true,
@@ -48,8 +44,8 @@ export function createApp(
     return c.json({ user });
   });
   app.post("/api/auth/signout", async (c) => {
-    await store.db.remove("fixtureSessions", {
-      tokenHash: contentHash(getCookie(c, "frame_fixture") || ""),
+    await store.db.remove("sessions", {
+      token: contentHash(getCookie(c, "frame_fixture") || ""),
     });
     deleteCookie(c, "frame_fixture", { path: "/" });
     return c.json({ ok: true });
@@ -64,9 +60,9 @@ export function createApp(
         .find((v) => v.startsWith("frame_fixture="))
         ?.slice(14);
       if (!token) return null;
-      const session = await store.db.one("fixtureSessions", {
-        tokenHash: contentHash(token),
-        expiresAt: { $gt: Date.now() },
+      const session = await store.db.one("sessions", {
+        token: contentHash(token),
+        expiresAt: { greaterThan: new Date() },
       });
       return session ? (await store.user(session.userId)) || null : null;
     }),

@@ -15,13 +15,12 @@ export default function FixtureApp({ liveAI = false }: { liveAI?: boolean }) {
       </aside>
       <App
         key={session}
-        erxesOrigin={location.origin}
+        fixture
         signedOut={
           <main className="page-error">
             <h1>Open your local Frame workspace</h1>
             <p>
-              This explicit development harness uses an isolated MongoDB replica
-              set.
+              This explicit development harness uses an isolated PostgreSQL database.
             </p>
             <form
               onSubmit={async (e) => {

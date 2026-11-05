@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { Store } from "../tests/mongo";
+import { Store } from "../tests/postgres";
 import { createApp } from "../server/app";
 import { LiveSessions } from "../server/live";
 import { newElement } from "../shared/operations";
@@ -98,7 +98,7 @@ test("record 100-slide saves and state convergence for 200 participants", async 
           memoryGiB: Math.round(totalmem() / 2 ** 30),
           kernel: release(),
           bun: Bun.version,
-          mongodb: "7.0.45",
+          postgresql: "17",
           database: "single-node local replica set",
         },
         deck: {

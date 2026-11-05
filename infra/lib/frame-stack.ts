@@ -35,10 +35,8 @@ export const configuration = z.object({
   zoneId: z.string().min(3),
   secretArn: z.string().startsWith("arn:aws:secretsmanager:"),
   imageTag: z.string().min(1),
-  authMode: z.enum(["clerk", "erxes"]),
-  database: z.string().min(1),
-  erxesOrigin: z.string().default(""),
-  erxesTenant: z.string().default(""),
+  authProviders: z.array(z.enum(["google", "github"])).default([]),
+  authEmail: z.boolean().default(false),
 });
 type Config = z.infer<typeof configuration>;
 function zone(scope: Construct, c: Config) {
@@ -196,7 +194,6 @@ export class FrameStack extends Stack {
       FRAME_TRUST_PROXY: "cloudfront",
       PORT: "3158",
       APP_ORIGIN: `https://${c.domain}`,
-      MONGODB_DATABASE: c.database,
       FRAME_STORAGE: "s3",
       FRAME_S3_BUCKET: data.bucketName,
       FRAME_S3_REGION: this.region,
@@ -209,12 +206,6 @@ export class FrameStack extends Stack {
       OPENROUTER_MODEL: "meta/muse-spark-1.3-contributor",
       OPENROUTER_MUSE_CONTRIBUTOR_ENABLED: "true",
       FRAME_RELEASE_ID: c.imageTag,
-      ...(c.authMode === "erxes"
-        ? {
-            FRAME_ERXES_ORIGIN: c.erxesOrigin,
-            FRAME_ERXES_TENANT: c.erxesTenant,
-          }
-        : {}),
     };
     const task = (
       kind: string,
@@ -241,19 +232,21 @@ export class FrameStack extends Stack {
         removalPolicy: RemovalPolicy.RETAIN,
       });
       const injected: Record<string, ecs.Secret> = {
-        MONGODB_URI: ecs.Secret.fromSecretsManager(secret, "MONGODB_URI"),
+        DATABASE_URL: ecs.Secret.fromSecretsManager(secret, "DATABASE_URL"),
       };
       if (kind === "api") {
-        if (c.authMode === "clerk") {
-          injected.CLERK_SECRET_KEY = ecs.Secret.fromSecretsManager(
-            secret,
-            "CLERK_SECRET_KEY",
-          );
-        } else
-          injected.FRAME_ERXES_SECRET = ecs.Secret.fromSecretsManager(
-            secret,
-            "FRAME_ERXES_SECRET",
-          );
+        injected.BETTER_AUTH_SECRET = ecs.Secret.fromSecretsManager(
+          secret,
+          "BETTER_AUTH_SECRET",
+        );
+        for (const provider of c.authProviders)
+          for (const suffix of ["CLIENT_ID", "CLIENT_SECRET"]) {
+            const key = `${provider.toUpperCase()}_${suffix}`;
+            injected[key] = ecs.Secret.fromSecretsManager(secret, key);
+          }
+        if (c.authEmail)
+          for (const key of ["RESEND_API_KEY", "AUTH_EMAIL_FROM"])
+            injected[key] = ecs.Secret.fromSecretsManager(secret, key);
         injected.FRAME_ADMIN_USER_IDS = ecs.Secret.fromSecretsManager(
           secret,
           "FRAME_ADMIN_USER_IDS",

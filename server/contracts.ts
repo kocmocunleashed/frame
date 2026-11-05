@@ -61,18 +61,18 @@ export async function collectionPage<T>(
     collection,
     after
       ? {
-          $and: [
+          all: [
             filter,
             {
-              $or: [
-                { [field]: { $lt: after[0] } },
-                { [field]: after[0], id: { $gt: after[1] } },
+              any: [
+                { [field]: { lessThan: after[0] } },
+                { [field]: after[0], id: { greaterThan: after[1] } },
               ],
             },
           ],
         }
       : filter,
-    { sort: { [field]: -1, _id: 1 }, limit: limit + 1 },
+    { sort: { [field]: -1, id: 1 }, limit: limit + 1 },
   );
   const selected = rows.slice(0, limit),
     items: T[] = [];
@@ -97,6 +97,7 @@ export function registerContracts(app: Hono<any>) {
     await next();
     if (
       !c.res.ok ||
+      c.req.path.startsWith("/api/auth/") ||
       c.req.header("X-Frame-Contract") === "reference" ||
       !c.res.headers.get("content-type")?.includes("application/json")
     )

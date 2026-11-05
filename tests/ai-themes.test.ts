@@ -4,7 +4,7 @@ import sharp from "sharp";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Store } from "./mongo";
+import { Store } from "./postgres";
 import { createApp } from "./support/legacy-app";
 import { createAIServices } from "../server/creation";
 import { FixtureAIProvider } from "./fixtures/ai-provider";
@@ -192,7 +192,7 @@ test("owned image references are passed as image inputs, foreign references and 
         )
       ).status,
     ).toBe(404);
-    await store.db.update("members",{userId:user.id},{$set:{role:"viewer"}});
+    await store.db.update("members",{userId:user.id},{set:{role:"viewer"}});
     expect(
       (
         await app.request(

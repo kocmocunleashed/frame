@@ -40,7 +40,7 @@ export class ExportService {
         409,
         "Save the current presentation before exporting.",
       );
-    const existing = (await this.store.db.one("jobs",{$and:[{ownerId:user.id},{idempotencyKey:key}]})) as JobRow | null;
+    const existing = (await this.store.db.one("jobs",{all:[{ownerId:user.id},{idempotencyKey:key}]})) as JobRow | null;
     if (existing) {
       const previous = JSON.parse(existing.payload);
       if (
@@ -87,7 +87,7 @@ export class ExportService {
         key,
         doc.id,
       );
-      await this.store.db.update("exportRequests",{jobId:job.id},{$setOnInsert:{jobId:job.id,deckId:doc.id,publicationId:publication?.id || null,publicationEdition:publication?.revision || null,format:format,createdAt:new Date().toISOString()}},{upsert:true});
+      await this.store.db.update("exportRequests",{jobId:job.id},{insertValues:{jobId:job.id,deckId:doc.id,publicationId:publication?.id || null,publicationEdition:publication?.revision || null,format:format,createdAt:new Date().toISOString()}},{upsert:true});
       return job;
     })();
   }
@@ -109,7 +109,7 @@ export class ExportService {
   }
   async list(docId: string, user: User): Promise<JobRow[]> {
     await this.store.access(docId, user, true);
-    return (await this.store.db.find("jobs",{$and:[{ownerId:user.id},{kind:"export"},{deckId:docId}]},{sort:{createdAt:-1},limit:30})) as JobRow[];
+    return (await this.store.db.find("jobs",{all:[{ownerId:user.id},{kind:"export"},{deckId:docId}]},{sort:{createdAt:-1},limit:30})) as JobRow[];
   }
   async run(
     job: JobRow,
@@ -147,7 +147,7 @@ export class ExportService {
     ];
     for (const id of wanted) {
       if (context.signal.aborted) throw new JobFailure("Export cancelled.");
-      const row = (await this.store.db.one("assets",{$and:[{id:id},{workspaceId:original.workspaceId}]})) as {
+      const row = (await this.store.db.one("assets",{all:[{id:id},{workspaceId:original.workspaceId}]})) as {
         mime: string;
         storageKey: string;
         bytes: number;

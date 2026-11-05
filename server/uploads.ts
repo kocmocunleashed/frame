@@ -5,6 +5,8 @@ import sharp from "sharp";
 import { Store, ApiError } from "./store";
 import { uid, type User } from "../shared/schema";
 import { objectStorage } from "./storage";
+import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
+import { sessionUser } from "./auth-session";
 import { contentHash } from "./database";
 import { JobQueue } from "./jobs";
 import { SourceStore } from "./sources";
@@ -143,12 +145,12 @@ export class Uploads {
       await this.store.db.update(
         "jobQuotas",
         { id: user.id },
-        { $inc: { revision: 1 } },
+        { increment: { revision: 1 } },
       );
       if (
         (await this.store.db.count("uploadIntents", {
           ownerId: user.id,
-          expiresAt: { $gt: Date.now() },
+          expiresAt: { greaterThan: Date.now() },
           status: "pending",
         })) >= 10
       )
@@ -172,6 +174,13 @@ export class Uploads {
       return row;
     })();
     const storage = objectStorage();
+    if (storage.config.mode === "blob")
+      return {
+        id,
+        expiresAt: new Date(intent.expiresAt).toISOString(),
+        mode: "blob",
+        pathname: `staging/${stagingKey}`,
+      };
     if (storage.config.mode === "local")
       return {
         id,
@@ -245,7 +254,7 @@ export class Uploads {
       await this.store.db.update(
         "uploadIntents",
         { id, status: "pending" },
-        { $set: { status: "finishing" } },
+        { set: { status: "finishing" } },
       );
       await this.store.db.insert("assets", {
         id: assetId,
@@ -296,7 +305,7 @@ export class Uploads {
         "uploadIntents",
         { id },
         {
-          $set: {
+          set: {
             status: "complete",
             result: value,
             resultAssetId: assetId,
@@ -343,10 +352,52 @@ export function registerUploadRoutes(
     c.json(await uploads.finish(c.req.param("id"), c.get("user")), 201),
   );
 }
+
+/** Completion callbacks authenticate with Blob signatures; token requests require a Frame session. */
+export function registerBlobUploadRoutes(
+  app: Hono<{ Variables: { user: User } }>,
+  store: Store,
+) {
+  const uploads = new Uploads(store);
+  app.post("/api/uploads/blob-token", async (c) => {
+    if (objectStorage().config.mode !== "blob")
+      throw new ApiError(400, "Blob uploads are not configured.");
+    return c.json(
+      await handleUpload({
+        request: c.req.raw,
+        body: (await c.req.json()) as HandleUploadBody,
+        token: process.env.BLOB_READ_WRITE_TOKEN,
+        onBeforeGenerateToken: async (pathname, payload) => {
+          const user = await sessionUser(store, c.req.raw.headers);
+          if (!user) throw new ApiError(401, "Sign in to upload.");
+          const id = z.string().min(1).max(100).parse(payload);
+          const row = await store.db.one("uploadIntents", {
+            id,
+            ownerId: user.id,
+          });
+          if (!row) throw new ApiError(404, "Upload not found.");
+          // The intent owns this scope; get() rechecks current membership or deck grants.
+          const scoped = { ...user, workspaceId: row.workspaceId };
+          const intent = await uploads.get(id, scoped);
+          if (pathname !== `staging/${intent.stagingKey}` || intent.result)
+            throw new ApiError(400, "This upload is no longer available.");
+          return {
+            allowedContentTypes: [intent.mime],
+            maximumSizeInBytes: intent.bytes,
+            validUntil: intent.expiresAt,
+            addRandomSuffix: false,
+            allowOverwrite: false,
+          };
+        },
+        onUploadCompleted: async () => {},
+      }),
+    );
+  });
+}
 export async function cleanupUploads(store: Store) {
   const expired = await store.db.find(
     "uploadIntents",
-    { expiresAt: { $lte: Date.now() } },
+    { expiresAt: { atMost: Date.now() } },
     { limit: 100 },
   );
   for (const row of expired) {

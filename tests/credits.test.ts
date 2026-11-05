@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { Store } from "./mongo";
+import { Store } from "./postgres";
 import { createApp } from "../server/app";
 import { createAIServices } from "../server/creation";
 import { PresentationCredits } from "../server/credits";
@@ -87,7 +87,7 @@ async function setup() {
     const { job } = await response.json();
     // Accounting tests use an already validated generation result, without
     // invoking models or the browser-based typography fitting pipeline.
-    await store.db.update("jobs",{id:job.id},{$set:{status:"succeeded",result:JSON.stringify({
+    await store.db.update("jobs",{id:job.id},{set:{status:"succeeded",result:JSON.stringify({
           document: makeDocument(
             member.id,
             member.workspaceId,

@@ -26,7 +26,7 @@ export default defineConfig({
           }
           const file = path.startsWith("/@fs/") ? resolve(path.slice(4)) : null;
           if (
-            /^\/(server|tests|scripts|infra|frame-erxes|\.frame-data|\.git|\.aws)(\/|$)/.test(
+            /^\/(server|tests|scripts|infra|\.frame-data|\.git|\.aws)(\/|$)/.test(
               path,
             ) ||
             /^\/\.env(?:\.|$)/.test(path) ||
@@ -68,11 +68,9 @@ export default defineConfig({
       ],
     },
     watch: {
-      // Native plugin packaging creates HTML outside this SPA. Watching it would
-      // reload an editor in the middle of a gesture or an acceptance test.
+      // Ignore generated files and private runtime data.
       ignored: [
         "**/.frame-data/**",
-        "**/frame-erxes/**",
         "**/infra/**",
         "**/dist/**",
       ],
@@ -86,7 +84,6 @@ export default defineConfig({
           }
         : {}),
       "/api": `http://127.0.0.1:${process.env.FRAME_API_PORT || 3158}`,
-      "/integrations/erxes": `http://127.0.0.1:${process.env.FRAME_API_PORT || 3158}`,
     },
   },
   build: { outDir: "dist" },

@@ -1,7 +1,9 @@
 import {registerContracts,pageQuerySchema,decodeCursor} from './contracts';
 import {readiness} from './readiness';
-import { erxesConfig, registerErxes } from "./erxes";
-import { registerUploadRoutes } from "./uploads";
+import { authFor, authCapabilities } from "./auth";
+import { requestIP } from "./request-ip";
+import { registerWorkspaceRoutes, activeWorkspaceUser } from "./workspaces";
+import { registerUploadRoutes, registerBlobUploadRoutes } from "./uploads";
 import { someAsync } from "./async-array";
 import { Collaboration, registerCollaborationRoutes } from "./collaboration";
 import { assetResponse } from "./asset-response";
@@ -50,7 +52,6 @@ export function createApp(
     };
   }>();
   registerContracts(app);
-  const erxes = erxesConfig();
   const publications = new PublicationStore(store, ai.exports);
   const live = new LiveSessions(store);
   const collaboration = new Collaboration(store);
@@ -120,9 +121,8 @@ export function createApp(
     c.header("Cache-Control", "no-store");
     await next();
   });
-  registerErxes(app, store, erxes);
   app.get("/api/auth/provider", (c) =>
-    c.json({ provider: erxes ? "erxes" : "clerk", erxesOrigin: erxes?.origin ?? null }),
+    c.json({ provider: "better-auth" }),
   );
   app.get("/api/health", async (c) => {
     return c.json({ ok: true, version: "0.1.0" });
@@ -131,35 +131,34 @@ export function createApp(
   registerAudienceRoutes(app, live);
   registerPublicRoutes(app, publications, resolveSession);
   registerPublicDownloadRoutes(app, ai.exports, publications, resolveSession);
-  app.all("/api/auth/*", (c) =>
-    c.json(
-      {
-        error: erxes
-          ? "Open Frame from your erxes workspace to sign in."
-          : "Sign in with Clerk to continue.",
-      },
-      erxes ? 403 : 410,
-    ),
-  );
+  app.get("/api/auth/config", c => c.json(authCapabilities()));
+  registerBlobUploadRoutes(app, store);
+  app.all("/api/auth/*", c => {
+    const headers = c.req.raw.headers;
+    // Never trust a caller-supplied IP used to bypass authentication rate limits.
+    const ip = requestIP(c.req.raw, c.env);
+    headers.set("x-frame-client-ip", ip === "local" ? "127.0.0.1" : ip);
+    return authFor(store).handler(c.req.raw);
+  });
   app.use("/api/*", async (c, next) => {
     const user = await resolveSession(store, c.req.raw.headers);
     if (!user) throw new ApiError(401, "Sign in to open your workspace.");
-    c.set("user", user);
+    c.set("user", await activeWorkspaceUser(store, user, c.req.header("X-Frame-Workspace")));
     await next();
   });
   registerCreditRoutes(app, store);
+  registerWorkspaceRoutes(app, store);
   app.get("/api/me", (c) =>
     c.json({
       user: c.get("user"),
-      ...(erxes ? { integration: { erxesOrigin: erxes.origin } } : {}),
     }),
   );
   app.patch("/api/me", async (c) => {
     const input = z
       .object({ name: z.string().trim().min(1).max(80) })
       .parse(await c.req.json());
-    await store.db.update("users",{id:c.get("user").id},{$set:{name:input.name}});
-    return c.json({ user: await store.user(c.get("user").id) });
+    await store.db.update("users",{id:c.get("user").id},{set:{name:input.name}});
+    return c.json({ user: { ...await store.user(c.get("user").id), workspaceId: c.get("user").workspaceId } });
   });
   app.get("/api/decks", async (c) => {const query=pageQuerySchema.parse(c.req.query());return c.json(await store.list(c.get("user"),c.req.header('X-Frame-Contract')==='reference'?undefined:{limit:query.limit+1,after:decodeCursor(query.cursor)}));});
   app.post("/api/decks", async (c) => {
@@ -225,7 +224,7 @@ export function createApp(
   app.delete("/api/decks/:id", async (c) => {
     const id=c.req.param('id'),user=c.get('user');
     await store.delete(id,user);
-    for(const job of await store.db.find('jobs',{deckId:id,status:{$in:['queued','running']}}))await ai.worker.cancel(job.id,job.ownerId);
+    for(const job of await store.db.find('jobs',{deckId:id,status:{inList:['queued','running']}}))await ai.worker.cancel(job.id,job.ownerId);
     return c.json({ ok: true });
   });
   registerCollaborationRoutes(app, collaboration);
@@ -304,7 +303,7 @@ export function createApp(
       workspaceId = (await store.access(presentationId, user, true))
         .workspaceId;
     else {
-      const member = (await store.db.one("members",{$and:[{workspaceId:workspaceId},{userId:user.id}]})) as {
+      const member = (await store.db.one("members",{all:[{workspaceId:workspaceId},{userId:user.id}]})) as {
         role: string;
       } | null;
       if (!member || member.role === "viewer")
@@ -367,7 +366,7 @@ export function createApp(
         if (typeof presentationId === "string" && presentationId)
           await store.requireAccess(presentationId, user, true);
         else {
-          const member = (await store.db.one("members",{$and:[{workspaceId:workspaceId},{userId:user.id}]})) as {
+          const member = (await store.db.one("members",{all:[{workspaceId:workspaceId},{userId:user.id}]})) as {
             role: string;
           } | null;
           if (!member || member.role === "viewer")
@@ -398,7 +397,7 @@ export function createApp(
       } | null;
     if (!row || !/^image\/|^video\//.test(row.mime))
       throw new ApiError(404, "Media not found.");
-    const member = (await store.db.one("members",{$and:[{workspaceId:row.workspaceId},{userId:user.id}]})) as {
+    const member = (await store.db.one("members",{all:[{workspaceId:row.workspaceId},{userId:user.id}]})) as {
       role: string;
     } | null;
     let allowed =
@@ -406,7 +405,7 @@ export function createApp(
       member?.role === "owner" ||
       member?.role === "editor";
     if (!allowed) {
-      const candidates = (await store.db.find("decks",{workspaceId:row.workspaceId,deletedAt:{$exists:false}})) as {
+      const candidates = (await store.db.find("decks",{workspaceId:row.workspaceId,deletedAt:{present:false}})) as {
         id: string;
       }[];
       allowed = await someAsync(candidates, async (candidate) =>
@@ -440,7 +439,7 @@ export function createApp(
       route = c.req.routePath || "/api/*";
     try {
       await store.db.transaction(async () => {
-        await store.db.update("errorEvents",{id:requestId},{$setOnInsert:{id:requestId,createdAt:time,method:c.req.method,route:route,errorType:error.name}},{upsert:true});
+        await store.db.update("errorEvents",{id:requestId},{insertValues:{id:requestId,createdAt:time,method:c.req.method,route:route,errorType:error.name}},{upsert:true});
       })();
     } catch {
       /* A logging failure must not replace the original response. */

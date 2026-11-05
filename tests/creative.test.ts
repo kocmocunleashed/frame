@@ -23,7 +23,7 @@ import { makeDocument } from "../shared/templates";
 import { composeScene, sceneEditOperations } from "../server/ai-scenes";
 import { CreativeWorkflows } from "../server/creative-workflows";
 import { JobQueue, JobWorker, JobFailure, publicJob } from "../server/jobs";
-import { Store } from "./mongo";
+import { Store } from "./postgres";
 import { FixtureAIProvider } from "./fixtures/ai-provider";
 import type { AIProvider } from "../server/ai-provider";
 import { SlideRenderer } from "../src/components/SlideRenderer";
@@ -91,8 +91,10 @@ async function setup(provider: AIProvider = new FixtureAIProvider()) {
     workflows.runChild(job, context),
   );
   worker.beforeRun = async () => await workflows.reconcile();
+  const draftId = uid();
+  await store.db.insert("creationDrafts", { id: draftId, ownerId: user.id, workspaceId: user.workspaceId, data: {}, revision: 0 });
   const payload = {
-    draftId: uid(),
+    draftId,
     draftFingerprint: "unchanged",
     brief,
     outline,
@@ -174,7 +176,7 @@ test("two review pairs can run together and a failed review cannot discard a fin
     "optional-review-failure",
   );
   for (let i = 0; i < 3; i++) await s.worker.runOnce();
-  const reviews = await s.queue.store.db.find("jobs",{$and:[{parentId:parent.id},{kind:"creative-review"}]},{sort:{createdAt:1,id:1}});
+  const reviews = await s.queue.store.db.find("jobs",{all:[{parentId:parent.id},{kind:"creative-review"}]},{sort:{createdAt:1,id:1}});
   expect(reviews).toHaveLength(2);
   const handler = s.worker.handler;
   s.worker.handler = async (job, context) => {
@@ -214,7 +216,7 @@ test("review previews retain every update when pairs finish out of slide order i
     "review-order",
   );
   for (let i = 0; i < 3; i++) await s.worker.runOnce();
-  const reviews = await s.store.db.find("jobs",{$and:[{parentId:parent.id},{kind:"creative-review"}]});
+  const reviews = await s.store.db.find("jobs",{all:[{parentId:parent.id},{kind:"creative-review"}]});
   const first = reviews.find(
     (job) => JSON.parse(job.payload).stage === "review:0",
   )!;
@@ -257,7 +259,7 @@ test("long decks keep at most two pending review pairs and start the next pair a
     "bounded-review-concurrency",
   );
   for (let i = 0; i < 4; i++) await s.worker.runOnce();
-  const queued = () => s.store.db.find('jobs',{parentId:parent.id,kind:'creative-review',status:{$in:['queued','running']}});
+  const queued = () => s.store.db.find('jobs',{parentId:parent.id,kind:'creative-review',status:{inList:['queued','running']}});
   expect(await queued()).toHaveLength(2);
   await s.worker.runOnce((await queued())[0].id);
   expect(await queued()).toHaveLength(2);

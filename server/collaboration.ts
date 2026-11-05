@@ -78,7 +78,7 @@ export class Collaboration {
       if (target.id === user.id)
         throw new ApiError(400, "You already own this presentation.");
       const old = (await this.store.db.one("collaborators", {
-        $and: [{ deckId: deckId }, { userId: target.id }],
+        all: [{ deckId: deckId }, { userId: target.id }],
       })) as {
         role: "editor" | "viewer";
       } | null;
@@ -101,7 +101,7 @@ export class Collaboration {
         "collaborators",
         { deckId: deckId, userId: target.id },
         {
-          $set: {
+          set: {
             deckId: deckId,
             userId: target.id,
             role: input.role,
@@ -123,7 +123,7 @@ export class Collaboration {
     return await this.store.db.transaction(async () => {
       await this.owner(deckId, user);
       const result = await this.store.db.remove("collaborators", {
-        $and: [
+        all: [
           { deckId: deckId },
           { userId: targetId },
           { role: expectedRole },
@@ -135,7 +135,7 @@ export class Collaboration {
           "This person’s access changed. Reload the people list.",
         );
       await this.store.db.remove("presence", {
-        $and: [{ deckId: deckId }, { userId: targetId }],
+        all: [{ deckId: deckId }, { userId: targetId }],
       });
       await this.retireEditor(deckId, targetId);
       return await this.sharing(deckId, user);
@@ -151,16 +151,16 @@ export class Collaboration {
       return;
     await this.store.db.update(
       "liveSessions",
-      { $and: [{ deckId: deckId }, { ownerId: userId }, { endedAt: null }] },
+      { all: [{ deckId: deckId }, { ownerId: userId }, { endedAt: null }] },
       {
-        $set: { endedAt: new Date(this.now()).toISOString() },
-        $inc: { version: +1 },
+        set: { endedAt: new Date(this.now()).toISOString() },
+        increment: { version: +1 },
       },
     );
     await this.store.db.update(
       "presence",
-      { $and: [{ deckId: deckId }, { userId: userId }] },
-      { $set: { mode: "view" } },
+      { all: [{ deckId: deckId }, { userId: userId }] },
+      { set: { mode: "view" } },
     );
   }
   async review(deckId: string, user: User): Promise<ReviewDocument> {
@@ -188,7 +188,7 @@ export class Collaboration {
     )
       throw new ApiError(404, "This media is not in the visible presentation.");
     const row = (await this.store.db.one("assets", {
-      $and: [{ id: assetId }, { workspaceId: doc.workspaceId }],
+      all: [{ id: assetId }, { workspaceId: doc.workspaceId }],
     })) as {
       storageKey: string;
       mime: string;
@@ -251,7 +251,7 @@ export class Collaboration {
         } | null;
         const member = asset
           ? ((await this.store.db.one("members", {
-              $and: [{ workspaceId: asset.workspaceId }, { userId: user.id }],
+              all: [{ workspaceId: asset.workspaceId }, { userId: user.id }],
             })) as {
               role: string;
             } | null)
@@ -394,7 +394,7 @@ export class Collaboration {
         "comments",
         { id: id },
         {
-          $set: {
+          set: {
             resolvedAt: resolved ? new Date(this.now()).toISOString() : null,
             resolvedBy: resolved ? user.id : null,
           },
@@ -455,13 +455,13 @@ export class Collaboration {
   ): Promise<Presence> {
     await this.store.requireAccess(deckId, user, mode === "edit");
     await this.store.db.remove("presence", {
-      lastSeen: { $lt: this.now() - 60000 },
+      lastSeen: { lessThan: this.now() - 60000 },
     });
     await this.store.db.update(
       "presence",
       { deckId: deckId, userId: user.id },
       {
-        $set: {
+        set: {
           deckId: deckId,
           userId: user.id,
           mode: mode,
@@ -582,7 +582,7 @@ export function registerCollaborationRoutes(
   app.delete("/api/decks/:id/presence", async (c) => {
     await collab.store.requireAccess(c.req.param("id"), c.get("user"));
     await collab.store.db.remove("presence", {
-      $and: [{ deckId: c.req.param("id") }, { userId: c.get("user").id }],
+      all: [{ deckId: c.req.param("id") }, { userId: c.get("user").id }],
     });
     return c.json({ ok: true });
   });

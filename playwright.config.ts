@@ -5,7 +5,12 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   testDir: "./e2e",
   // Uses the isolated authenticated server in e2e/agent.config.ts.
-  testIgnore: ["**/agent-preferences.spec.ts", "**/admin.spec.ts"],
+  testIgnore: [
+    "**/agent-preferences.spec.ts",
+    "**/admin.spec.ts",
+    "**/standalone.spec.ts",
+    "**/account-security.spec.ts",
+  ],
   fullyParallel: false,
   workers: 1,
   timeout: 45000,
@@ -33,7 +38,7 @@ export default defineConfig({
       FRAME_API_PORT: apiPort,
       APP_ORIGIN: `http://127.0.0.1:${webPort}`,
       NODE_ENV: "test",
-      FRAME_TEST_MONGODB_URI: process.env.FRAME_TEST_MONGODB_URI || "",
+      FRAME_TEST_DATABASE_URL: process.env.FRAME_TEST_DATABASE_URL || "",
       FRAME_STORAGE: "local",
       FRAME_QUEUE_DRIVER: "local",
       FRAME_ASSETS: "/tmp/frame-browser-tests/assets",

@@ -1,12 +1,17 @@
 let identity: { id: string; workspaceId: string } | undefined;
-export const recoveryIdentity = () => identity;
-let tokenGetter: (() => Promise<string | null>) | undefined;
-export function setTokenGetter(getter: () => Promise<string | null>) {
-  tokenGetter = getter;
+let activeWorkspace: string | null = null;
+try {
+  activeWorkspace = sessionStorage.getItem("frame:workspace");
+} catch {}
+export function setWorkspace(id: string) {
+  activeWorkspace = id;
+  try {
+    sessionStorage.setItem("frame:workspace", id);
+  } catch {}
 }
+export const recoveryIdentity = () => identity;
 async function authHeaders(): Promise<Record<string, string>> {
-  const token = await tokenGetter?.();
-  return token ? { Authorization: `Bearer ${token}` } : {};
+  return activeWorkspace ? { "X-Frame-Workspace": activeWorkspace } : {};
 }
 export class RequestError extends Error {
   constructor(
@@ -65,10 +70,21 @@ export async function api<T>(
     .json()
     .catch(() => ({ error: "The server returned an unreadable response." }));
   if (!response.ok)
-    throw new RequestError(
-      response.status,
-      result.error || "The request failed. Try again.",
-    );
+    if (
+      path === "/me" &&
+      activeWorkspace &&
+      result.code === "WORKSPACE_ACCESS_REVOKED"
+    ) {
+      activeWorkspace = null;
+      try {
+        sessionStorage.removeItem("frame:workspace");
+      } catch {}
+      return api<T>(path, options);
+    } else
+      throw new RequestError(
+        response.status,
+        result.error || "The request failed. Try again.",
+      );
   if (audienceCode && result.participantToken) {
     try {
       sessionStorage.setItem(
@@ -78,7 +94,13 @@ export async function api<T>(
     } catch {}
   }
   if (path === "/me" && result.user) identity = result.user;
-  if (path === "/auth/signout") identity = undefined;
+  if (path === "/auth/signout" || path === "/auth/sign-out") {
+    identity = undefined;
+    activeWorkspace = null;
+    try {
+      sessionStorage.removeItem("frame:workspace");
+    } catch {}
+  }
   // Components consume arrays while the HTTP boundary uses cursor pages.
   if (result && Array.isArray(result.items)) {
     const items = [...result.items];

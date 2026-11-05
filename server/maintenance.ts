@@ -5,11 +5,11 @@ import type { Store } from "./store";
 export async function maintain(store: Store, { dryRun = true } = {}) {
   const expiredJobs = await store.db.count("jobs", {
       status: "running",
-      leaseOwner: { $ne: null },
-      leaseUntil: { $lte: Date.now() },
+      leaseOwner: { notEqual: null },
+      leaseUntil: { atMost: Date.now() },
     }),
     uploads = await store.db.count("uploadIntents", {
-      expiresAt: { $lte: Date.now() },
+      expiresAt: { atMost: Date.now() },
     }),
     tombstones = await store.db.find(
       "deletionTombstones",
@@ -19,18 +19,15 @@ export async function maintain(store: Store, { dryRun = true } = {}) {
   if (!dryRun) {
     await new JobQueue(store).recover();
     await cleanupUploads(store);
-    for (const c of [
-      "erxesSessions",
-      "erxesTickets",
-      "presence",
-      "liveParticipants",
-      "rateLimits",
-    ])
-      await store.db.remove(c, { expiresAt: { $lte: Date.now() } });
+    for (const c of ["presence", "rateLimits", "sessions", "verifications"])
+      await store.db.remove(c, { expiresAt: { atMost: Date.now() } });
+    await store.db.remove("authRateLimits", {
+      lastRequest: { atMost: Date.now() - 86400000 },
+    });
     await store.db.update(
       "liveSessions",
-      { endedAt: null, expiresAt: { $lte: Date.now() } },
-      { $set: { endedAt: new Date().toISOString() }, $inc: { version: 1 } },
+      { endedAt: null, expiresAt: { atMost: Date.now() } },
+      { set: { endedAt: new Date().toISOString() }, increment: { version: 1 } },
     );
     for (const root of tombstones)
       await store.db.transaction(async () => {
@@ -51,9 +48,9 @@ export async function maintain(store: Store, { dryRun = true } = {}) {
           await store.db.remove(collection, { deckId: root.deckId });
         await store.db.update(
           "jobs",
-          { deckId: root.deckId, status: { $in: ["queued", "running"] } },
+          { deckId: root.deckId, status: { inList: ["queued", "running"] } },
           {
-            $set: {
+            set: {
               status: "cancelled",
               cancelRequestedAt: Date.now(),
               leaseOwner: null,
@@ -63,12 +60,12 @@ export async function maintain(store: Store, { dryRun = true } = {}) {
         );
         await store.db.remove("decks", {
           id: root.deckId,
-          deletedAt: { $exists: true },
+          deletedAt: { present: true },
         });
         await store.db.update(
           "deletionTombstones",
           { id: root.id, state: "marked" },
-          { $set: { state: "cleaned", updatedAt: new Date().toISOString() } },
+          { set: { state: "cleaned", updatedAt: new Date().toISOString() } },
         );
       });
   }

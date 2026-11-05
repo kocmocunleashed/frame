@@ -7,8 +7,8 @@ import {
   type ReactNode,
 } from "react";
 import type { User } from "../shared/schema";
-import { useAuth, useClerk, UserButton } from "@clerk/react";
-import { api, navigate, RequestError, setTokenGetter } from "./lib/api";
+import { authClient } from "./lib/auth-client";
+import { api, navigate, RequestError } from "./lib/api";
 import { Loading, ErrorMessage, Brand } from "./components/UI";
 import Auth from "./components/Auth";
 import Workspace from "./components/Workspace";
@@ -47,44 +47,34 @@ class ErrorBoundary extends Component<
   }
 }
 export default function App({
-  erxesOrigin,
   signedOut,
+  fixture = false,
 }: {
-  erxesOrigin?: string | null;
   signedOut?: ReactNode;
+  fixture?: boolean;
 }) {
-  return erxesOrigin ? (
+  return fixture ? (
     <Studio
       isLoaded
-      userId="erxes"
-      erxesOrigin={erxesOrigin}
+      userId="fixture"
       signedOut={signedOut}
       endSession={() => api("/auth/signout", { method: "POST" })}
     />
   ) : (
-    <ClerkStudio />
+    <StandaloneStudio />
   );
 }
-
-function ClerkStudio() {
-  const { isLoaded, userId, getToken } = useAuth();
-  const clerk = useClerk();
-  setTokenGetter(getToken);
+function StandaloneStudio() {
+  const { data, isPending } = authClient.useSession();
   return (
     <Studio
-      isLoaded={isLoaded}
-      userId={userId}
-      endSession={() => clerk.signOut()}
-      accountControls={
-        userId ? (
-          <>
-            <button className="button" onClick={() => clerk.openUserProfile()}>
-              Manage account & verify email
-            </button>
-            <UserButton />
-          </>
-        ) : null
-      }
+      isLoaded={!isPending}
+      userId={data?.user.id}
+      endSession={async () => {
+        const result = await authClient.signOut();
+        if (result.error)
+          throw new Error(result.error.message || "Could not sign out.");
+      }}
     />
   );
 }
@@ -92,14 +82,12 @@ function ClerkStudio() {
 function Studio({
   isLoaded,
   userId,
-  erxesOrigin,
   endSession,
   accountControls,
   signedOut,
 }: {
   isLoaded: boolean;
   userId?: string | null;
-  erxesOrigin?: string;
   endSession: () => Promise<unknown>;
   accountControls?: ReactNode;
   signedOut?: ReactNode;
@@ -113,15 +101,8 @@ function Studio({
     try {
       const result = await api<{
         user: User;
-        integration?: { erxesOrigin: string };
       }>("/me");
       setUser(result.user);
-      if (
-        erxesOrigin &&
-        result.integration?.erxesOrigin === erxesOrigin &&
-        window.parent !== window
-      )
-        window.parent.postMessage({ type: "frame-erxes:ready" }, erxesOrigin);
     } catch (e) {
       if (e instanceof RequestError && e.status === 401) setUser(null);
       else setError((e as Error).message);
@@ -142,12 +123,13 @@ function Studio({
     const change = () => setPath(location.pathname);
     window.addEventListener("popstate", change);
     return () => window.removeEventListener("popstate", change);
-  }, [isLoaded, userId, erxesOrigin]);
+  }, [isLoaded, userId]);
   async function signout() {
     try {
       await endSession();
       for (const key of Object.keys(sessionStorage))
-        if (key.startsWith("frame:rehearsal:")) sessionStorage.removeItem(key);
+        if (key.startsWith("frame:rehearsal:") || key === "frame:workspace")
+          sessionStorage.removeItem(key);
       setUser(null);
       navigate("/");
     } catch (e) {
@@ -157,7 +139,8 @@ function Studio({
   let content: ReactNode;
   const publicMatch = path.match(/^\/view\/([^/]+)$/);
   const audienceMatch = path.match(/^\/join(?:\/([^/]+))?$/);
-  if (!isLoaded) content = <Loading />;
+  // Session refreshes must preserve an in-progress account form and its result.
+  if (!isLoaded && !ready) content = <Loading />;
   else if (audienceMatch)
     content = (
       <Audience key={audienceMatch[1] || "join"} code={audienceMatch[1]} />
@@ -165,6 +148,8 @@ function Studio({
   else if (publicMatch)
     content = <PublicViewer key={publicMatch[1]} id={publicMatch[1]} />;
   else if (path === "/explore") content = <PublicGallery />;
+  else if (path === "/forgot-password" || path === "/reset-password")
+    content = <Auth />;
   else if (!ready) content = <Loading />;
   else if (error)
     content = (
@@ -176,24 +161,7 @@ function Studio({
         </button>
       </main>
     );
-  else if (!user)
-    content =
-      signedOut ||
-      (erxesOrigin ? (
-        <main className="page-error">
-          <Brand />
-          <h1>Open Frame from erxes</h1>
-          <p>
-            Your session has ended. Return to your workspace and choose Frame to
-            reconnect.
-          </p>
-          <a className="button primary" href={erxesOrigin} target="_top">
-            Return to erxes
-          </a>
-        </main>
-      ) : (
-        <Auth />
-      ));
+  else if (!user) content = signedOut || <Auth />;
   else {
     const match = path.match(/^\/(deck|present|create|review)\/([^/]+)$/);
     content =
@@ -210,12 +178,7 @@ function Studio({
           <Presenter key={match[2]} id={match[2]} />
         )
       ) : (
-        <Workspace
-          user={user}
-          onSignout={signout}
-          onUser={setUser}
-          externalAccountUrl={erxesOrigin}
-        />
+        <Workspace user={user} onSignout={signout} onUser={setUser} />
       );
   }
   return (

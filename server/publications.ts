@@ -61,7 +61,7 @@ export class PublicationStore {
   async current(id: string, user: User): Promise<Publication | null> {
     await this.owned(id, user);
     const row = (await this.store.db.one("publications", {
-      $and: [{ deckId: id }, { revokedAt: null }],
+      all: [{ deckId: id }, { revokedAt: null }],
     })) as Row | null;
     return row ? this.metadata(row) : null;
   }
@@ -88,7 +88,7 @@ export class PublicationStore {
           "Save the latest presentation before publishing.",
         );
       const previous = (await this.store.db.one("publications", {
-        $and: [{ deckId: id }, { revokedAt: null }],
+        all: [{ deckId: id }, { revokedAt: null }],
       })) as Row | null;
       if ((previous?.edition || null) !== input.expectedEdition)
         throw new ApiError(
@@ -98,7 +98,7 @@ export class PublicationStore {
       const assets = referencedAssets(doc);
       for (const assetId of assets) {
         const asset = (await this.store.db.one("assets", {
-          $and: [{ id: assetId }, { workspaceId: doc.workspaceId }],
+          all: [{ id: assetId }, { workspaceId: doc.workspaceId }],
         })) as {
           mime: string;
         } | null;
@@ -115,14 +115,14 @@ export class PublicationStore {
           "publications",
           { id: previous.id },
           {
-            $set: {
+            set: {
               visibility: input.visibility,
               allowDownload: input.allowDownload ? 1 : 0,
               revision: doc.revision,
               document: JSON.stringify(doc),
               updatedAt: now,
             },
-            $inc: { edition: +1 },
+            increment: { edition: +1 },
           },
         );
       else
@@ -175,7 +175,7 @@ export class PublicationStore {
     await this.store.db.transaction(async () => {
       await this.owned(id, user);
       const row = (await this.store.db.one("publications", {
-        $and: [
+        all: [
           { id: publicationId },
           { deckId: id },
           { ownerId: user.id },
@@ -192,7 +192,7 @@ export class PublicationStore {
         "publications",
         { id: row.id },
         {
-          $set: {
+          set: {
             active: false,
             revokedAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),

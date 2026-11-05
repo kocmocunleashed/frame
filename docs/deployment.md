@@ -1,43 +1,57 @@
-# Deploying Frame on AWS
+# Deploy Frame
 
-Choose a region close to users and the Atlas deployment. Provision a MongoDB replica set on Atlas in that region. Use an Atlas private endpoint where the selected dedicated tier supports it; otherwise restrict public TLS access to the VPC NAT egress addresses. Frame's database and database user must be separate from erxes core data.
+Frame runs as an independent Bun/Hono API with a Vite frontend and background workers. Neon PostgreSQL stores identity and application data. Private assets and export bytes use S3; SQS wakes workers. The checked-in CDK stack retains the existing ECS, CloudFront, Route53, S3, SQS and scheduled maintenance architecture.
 
-Prepare a Route 53 hosted zone and an environment-specific Secrets Manager JSON secret. Required keys are `MONGODB_URI`, `FRAME_ADMIN_USER_IDS`, `OPENROUTER_API_KEY`, and either `CLERK_SECRET_KEY` or `FRAME_ERXES_SECRET`. An empty AI key means manual-only operation. Keep secret values out of CDK context, source, task environment literals, logs, and frontend build arguments. Only `VITE_CLERK_PUBLISHABLE_KEY` is a browser-safe build argument.
+## Vercel hosting
 
-Copy `infra/config.example.json` outside the repository and fill all inputs. `cloudfrontPrefixListId` is the regional AWS-managed prefix list named `com.amazonaws.global.cloudfront.origin-facing`; obtain it using `aws ec2 describe-managed-prefix-lists --filters Name=prefix-list-name,Values=com.amazonaws.global.cloudfront.origin-facing --region YOUR_REGION`. The ALB accepts that network on HTTPS and also requires an origin header set by this distribution. ECS API ingress accepts only the ALB security group. Tasks use private subnets and NAT for Clerk and AI. The data bucket blocks public access and restricts upload CORS to the application origin.
+The same application can run on the existing Vercel project. `vercel.json` packages the Bun API, a signed Queue consumer, a protected cron sweep and the existing studio HTML. Select `FRAME_STORAGE=blob` and `FRAME_QUEUE_DRIVER=vercel`, connect a private Blob store with `BLOB_READ_WRITE_TOKEN`, and retain a stable `CRON_SECRET`. Set `DATABASE_URL` to the reviewed Neon database, `APP_ORIGIN` to the HTTPS custom domain and keep `BETTER_AUTH_SECRET` stable. Existing AI and optional account-provider credentials stay server-side.
 
-The edge certificate stack runs in us-east-1; the application stack uses your selected region. Bootstrap both CDK regions. The existing Route 53 zone is referenced by ID, and certificates and application/origin records are managed by these stacks. `origin-ENV.slides.example.org` is the ALB origin record. Dynamic routes have caching disabled; only `/assets/*` uses S3 caching. There is no SPA error mapping on API or media paths.
+The API dispatches the PostgreSQL outbox through Vercel Queues. Messages carry the job ID and dispatch generation; the database retains leases, idempotency and revision guards. Delayed retry wakeups are scheduled before the invocation ends. The daily cron recovers expired work and staging uploads; active job polling also reconciles pending work. Auth email and dispatch tasks use `waitUntil`. The Queue trigger authenticates worker invocations, and the cron compares its bearer secret in constant time.
 
-For the first release, set `bootstrap: true` and deploy the stacks. This creates resources with services at zero tasks and the maintenance schedule disabled, allowing the first immutable ECR image to be pushed. Do not expose this state as a working application.
+Uploads go directly to private Blob storage with a path-scoped, short-lived token. Token generation requires a current Frame session and upload authorization. The finish endpoint checks size, checksum and media bytes before committing an immutable asset. Download responses still pass through Frame authorization and support media byte ranges. The serverless Chromium binary is packaged with the unchanged Node browser driver for exports and fitting.
 
-Build the Linux amd64 image with the pinned Dockerfile. Push a unique release tag into the output ECR repository; tags are immutable. Record its digest. Upload `dist/assets/` under `assets/` in the output frontend bucket **before** releasing HTML. Include only fingerprinted assets and set immutable caching. The HTML is served by the image and always uses no-store.
-
-Run `bun scripts/migrate.ts` as a one-off ECS task using the maintenance task definition with a command override. It holds a migration lease and installs indexes with a checksum ledger. Run this before starting API or worker tasks. Set `bootstrap: false` and deploy. Production starts two API tasks across availability zones; staging starts one. Worker capacity starts at two and scales on queue backlog. A shared MongoDB lease permits one Chromium export at a time, preserving another worker for AI/extraction. Validate memory use before increasing Chromium concurrency.
-
-The Docker image includes the Playwright-managed Chromium matching `bun.lock`, bundled fonts, API and renderer sources, and the frontend build. Runtime runs as an unprivileged user. The same image digest is used for API/worker/dispatcher/maintenance with different commands and separate task roles.
-
-Build and exercise the local image before pushing it:
+Git-triggered deployments are disabled in this configuration so pushing code cannot switch production before migrations and data verification finish. Release through the CLI:
 
 ```bash
-docker build --platform linux/amd64 --target api -t frame:verified .
-FRAME_CONTAINER_ENGINE=docker bun scripts/check-image.ts frame:verified
+vercel deploy --prod --skip-domain
+# Verify the returned deployment, then assign the project's existing domains:
+vercel promote <verified-deployment-url>
 ```
 
-The image check disables networking and verifies the runtime user plus actual
-PDF, PNG ZIP, offline HTML and image-based PPTX output. Podman is also supported:
-use `podman build` and omit `FRAME_CONTAINER_ENGINE`. Clerk deployments supply
-the browser-safe publishable key through the `VITE_CLERK_PUBLISHABLE_KEY` build
-argument. Server secrets belong in ECS secret references, never build arguments.
+Update secret values through protected stdin or the provider's secret settings, never CLI `--env` or `--value` arguments. A deployment keeps its captured environment, so an existing deployment remains available for rollback. Preserve the old database and Blob objects through cutover. The [read-only PostgreSQL exporter](../scripts/export-legacy-postgres.ts) converts the earlier Vercel schema to the same validated import contract described in the [cutover guide](migration/legacy-data.md). Existing Argon2/bcrypt password hashes are accepted by Better Auth; records without a usable hash remain reserved for explicit administrator provisioning. They cannot be claimed by signing up with the same email.
 
-Deployment acceptance must exercise real HTTPS authentication, erxes embedded/new-tab launch when configured, private upload and Range delivery, save conflicts, a generation job, all export formats, publication revocation, and audience reconnection. Terminate and replace a worker during work; ensure leases recover and stale results cannot commit. Record release ID, image digest, CDK revision, Mongo migration version, browser and provider versions, and results.
+## Configuration and secrets
 
-Configure alarm actions and recipients before production use. Queue age, dead-letter count, API errors and latency are included. Add organization-specific dashboards for Atlas connections, S3 failures, outbox age, lease loss, worker heartbeats, memory, and backup failures. AI availability is independent of API readiness.
+Copy `infra/config.example.json` to a private operator-controlled configuration and set the selected environment, AWS account/region, domain/hosted zone, immutable image tag, Secrets Manager ARN and regional CloudFront origin-facing prefix list. Optional `authProviders` (`["google", "github"]`) and `authEmail` (`true`) enable secret injection for those account features. Their defaults are `[]` and `false`.
 
-For rollback, retain previous immutable images and compatible schemas. Do not deploy a worker that cannot read current job payloads. Pause new jobs before incompatible changes. Restoring an older database loses newer writes unless they are reconciled; switching DNS alone is not a data rollback.
+The deployment secret contains `DATABASE_URL`, `BETTER_AUTH_SECRET`, `FRAME_ADMIN_USER_IDS`, and `OPENROUTER_API_KEY` when AI is enabled. The API receives the database/auth/admin values; API and workers receive the AI key where required. Keep a separate backup key outside normal service roles. Never put credentials in CDK configuration, image build arguments, frontend environment variables, or logs.
 
-CloudWatch Embedded Metric Format also supplies outbox age, active worker count,
-and lease losses. Their alarms are provisioned; missing worker/maintenance
-metrics raise alarms. Connect alarm actions to the operator-selected recipients.
-See AWS's [at-least-once delivery guidance](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/standard-queues-at-least-once-delivery.html)
-and MongoDB's [transaction requirements](https://www.mongodb.com/docs/manual/core/transactions/)
-for the underlying delivery and persistence guarantees.
+For each enabled auth provider, add its `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` or `GITHUB_CLIENT_ID`/`GITHUB_CLIENT_SECRET` pair to the same secret. For `authEmail`, add `RESEND_API_KEY` and `AUTH_EMAIL_FROM`. Only the API receives these values. Configure [callbacks and email delivery](authentication.md) before enabling them, then restart API instances after a configuration change.
+
+Use a dedicated Neon database and TLS. Frame's Neon driver uses WebSockets with a small direct connection pool. The direct endpoint is needed for migration advisory locks. All API replicas share the same stable `BETTER_AUTH_SECRET` and HTTPS `APP_ORIGIN`. Cookie authentication is served on the application origin; no cross-origin auth proxy is required.
+
+## Build and review
+
+```bash
+bun install --frozen-lockfile
+bun run lint
+bun run build
+bun run test
+bun run test:browser
+bun run test:browser --config e2e/standalone.config.ts
+bun run test:browser --config e2e/account-security.config.ts
+bun run infra:check
+```
+
+The Dockerfile includes the compiled frontend, Bun server, Node browser driver, pinned Chromium installation and checked-in `drizzle/` migrations. There are no build-time auth credentials. Existing S3 policies, private task networking and disabled caching for dynamic requests remain in the CDK stack.
+
+## Approved rollout
+
+1. Create a Neon development branch and test reviewed migrations there with `bun run db:migrate`.
+2. For an existing installation, complete the [data cutover](migration/legacy-data.md), identity provisioning and rollback rehearsal before changing ingress.
+3. Build and push an immutable image using the deployment's existing ECR workflow. Review CDK synthesis and change sets.
+4. With production approval, run the migration task once against the intended database. It validates migration checksums and takes an advisory lock. Runtime startup does not migrate or import data.
+5. Roll out API, dispatcher, workers and maintenance. Configure at least two workers to retain capacity during Chromium rendering. Configure the storage adapter and SQS URLs as required by production validation.
+6. Verify health/readiness, registration and session cookies, membership revocation, create/edit/reload, upload, AI generation, publishing, live presentation and downloads through the actual HTTPS origin.
+
+Production deployment, DNS cutover and destructive database changes are operator actions requiring explicit approval. Do not use disposable preview identity or test databases in production.

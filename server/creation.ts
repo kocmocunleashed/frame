@@ -98,7 +98,7 @@ export class CreationStore {
       await this.store.db.update(
         "jobQuotas",
         { id: user.id },
-        { $inc: { revision: 1 } },
+        { increment: { revision: 1 } },
       );
       const prior = await this.preferences(user);
       if (prior.revision !== request.baseRevision)
@@ -110,7 +110,7 @@ export class CreationStore {
         "agentPreferences",
         { userId: user.id },
         {
-          $set: {
+          set: {
             data: JSON.stringify(value),
             revision: request.baseRevision + 1,
             updatedAt: new Date().toISOString(),
@@ -132,7 +132,7 @@ export class CreationStore {
   }
   async get(id: string, user: User): Promise<CreationDraft> {
     const row = (await this.store.db.one("creationDrafts", {
-      $and: [
+      all: [
         { id: id },
         { ownerId: user.id },
         { workspaceId: user.workspaceId },
@@ -145,7 +145,7 @@ export class CreationStore {
     return (
       (await this.store.db.find(
         "creationDrafts",
-        { $and: [{ ownerId: user.id }, { workspaceId: user.workspaceId }] },
+        { all: [{ ownerId: user.id }, { workspaceId: user.workspaceId }] },
         { sort: { updatedAt: -1 }, limit: 30 },
       )) as DraftRow[]
     ).map((r) => this.project(r));
@@ -202,11 +202,11 @@ export class CreationStore {
         "creationDrafts",
         { id: id },
         {
-          $set: {
+          set: {
             data: JSON.stringify(value),
             updatedAt: new Date().toISOString(),
           },
-          $inc: { revision: +1 },
+          increment: { revision: +1 },
         },
       );
       return await this.get(id, user);
@@ -232,7 +232,7 @@ export function createAIServices(
       if (job.kind === "extract") {
         await context.progress("Reading document text", 20);
         const asset = (await store.db.one("assets", {
-          $and: [{ id: payload.assetId }, { ownerId: job.ownerId }],
+          all: [{ id: payload.assetId }, { ownerId: job.ownerId }],
         })) as {
           storageKey: string;
         } | null;
@@ -390,7 +390,7 @@ export function registerAIRoutes(
   const credits = new PresentationCredits(store);
   const canWrite = async (user: User) => {
     const member = (await store.db.one("members", {
-      $and: [{ userId: user.id }, { workspaceId: user.workspaceId }],
+      all: [{ userId: user.id }, { workspaceId: user.workspaceId }],
     })) as {
       role: string;
     } | null;

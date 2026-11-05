@@ -8,7 +8,7 @@ import {
   GEMMA4_MODEL,
 } from "../server/openrouter";
 import { JobFailure, JobQueue, JobWorker } from "../server/jobs";
-import { Store } from "./mongo";
+import { Store } from "./postgres";
 const schema = z.object({ title: z.string() }).strict();
 function fixture(
   options: {

@@ -134,8 +134,7 @@ test("failed loads cannot overwrite preferences; profile and keyboard navigation
   await expect(
     page.getByRole("tab", { name: "Profile & security" }),
   ).toBeFocused();
-  // The erxes account still routes security to its host, without Clerk.
-  await expect(page.getByRole("link", { name: "Manage your erxes account" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Change password" })).toBeVisible();
   await page.getByLabel("Your name", { exact: true }).fill("Settings tester");
   await page.getByRole("button", { name: "Save changes" }).click();
   await expect(

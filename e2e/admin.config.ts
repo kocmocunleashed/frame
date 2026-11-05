@@ -27,7 +27,7 @@ export default defineConfig({
       FRAME_API_PORT: "3147",
       APP_ORIGIN: "http://127.0.0.1:5183",
       NODE_ENV: "test",
-      FRAME_TEST_MONGODB_URI: process.env.FRAME_TEST_MONGODB_URI || "",
+      FRAME_TEST_DATABASE_URL: process.env.FRAME_TEST_DATABASE_URL || "",
       FRAME_QUEUE_DRIVER: "local",
       FRAME_STORAGE: "local",
       FRAME_ASSETS: "/tmp/frame-admin-browser/assets",

@@ -1,6 +1,6 @@
 import { afterEach, describe, test, expect } from "bun:test";
 import { createApp } from "./support/legacy-app";
-import { Store } from "./mongo";
+import { Store } from "./postgres";
 import { uid, type FrameDocument } from "../shared/schema";
 import { rmSync } from "node:fs";
 import sharp from "sharp";
@@ -54,10 +54,10 @@ describe("account and document APIs", () => {
   test("verified fixture identity gets a hashed HttpOnly session and owned samples", async () => {
     const { store, app } = setup(),
       cookie = await signup(app);
-    const row = await store.db.one('fixtureSessions');
-    expect(row.tokenHash).toHaveLength(64);
-    expect(row.token).toBeUndefined();
-    expect(await store.db.count('authIdentities')).toBe(1);
+    const row = await store.db.one('sessions');
+    expect(row.token).toHaveLength(64);
+    expect(cookie).not.toContain(row.token);
+    expect(await store.db.count('users')).toBe(1);
     const decks = await (
       await app.request("/api/decks", request("GET", cookie))
     ).json();

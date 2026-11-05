@@ -40,6 +40,11 @@ export async function runBrowserTask(
   const directory = await mkdtemp(join(tmpdir(), "frame-browser-"));
   let cleanup: () => Promise<void> = async () => {};
   try {
+    let serverlessPath: string | undefined;
+    if (process.env.VERCEL && !process.env.FRAME_CHROME_PATH) {
+      const { default: serverless } = await import("@sparticuz/chromium");
+      serverlessPath = await serverless.executablePath();
+    }
     const { html, ...settings } = task;
     await writeFile(join(directory, "slide.html"), html, { mode: 0o600 });
     await writeFile(join(directory, "task.json"), JSON.stringify(settings), {
@@ -56,10 +61,15 @@ export async function runBrowserTask(
       "XDG_CONFIG_HOME",
       "FONTCONFIG_FILE",
       "FONTCONFIG_PATH",
+      "LD_LIBRARY_PATH",
       "PLAYWRIGHT_BROWSERS_PATH",
       "FRAME_CHROME_PATH",
     ])
       if (process.env[key]) env[key] = process.env[key]!;
+    if (serverlessPath) {
+      env.FRAME_CHROME_PATH = serverlessPath;
+      env.FRAME_SERVERLESS_BROWSER = "true";
+    }
     await withDeadline(
       signal,
       task.format === "measure" ? 60000 : 150000,

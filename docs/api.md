@@ -19,11 +19,11 @@ The reused source implementation's array responses and `{ draft, job }` creation
 response remain available only with `X-Frame-Contract: reference`. The current
 browser sends `X-Frame-Contract: 1` and adapts paginated lists to component state.
 `revision` is a compatibility alias for `baseRevision` on creation drafts and
-saved designs; contradictory values are rejected. The erxes ticket boundary
-has no alternate protocol.
+saved designs; contradictory values are rejected.
 
-Mutations use JSON and same-origin credentials. Standalone requests include the
-Clerk bearer token. Erxes requests use the host-only HttpOnly session cookie.
+Mutations use JSON and same-origin credentials. Authenticated requests use Better Auth
+HttpOnly session cookies. `X-Frame-Workspace` selects a workspace only after
+the server verifies current membership.
 Audience requests use `X-Frame-Participant`; joining returns `participantToken`.
 The participant cookie is retained for old clients. Identity, ownership, roles,
 workspace access and credit administration are resolved on the server.
@@ -31,11 +31,27 @@ workspace access and credit administration are resolved on the server.
 Core examples:
 
 ```json
-{"baseRevision":12,"operations":[{"type":"text.set","slideId":"slide-1","id":"element-1","text":"A revised headline","richText":null}]}
+{
+  "baseRevision": 12,
+  "operations": [
+    {
+      "type": "text.set",
+      "slideId": "slide-1",
+      "id": "element-1",
+      "text": "A revised headline",
+      "richText": null
+    }
+  ]
+}
 ```
 
 ```json
-{"format":"pdf","scale":1,"baseRevision":12,"key":"client-generated-unique-key"}
+{
+  "format": "pdf",
+  "scale": 1,
+  "baseRevision": 12,
+  "key": "client-generated-unique-key"
+}
 ```
 
 A lost revision race returns 409. Never resubmit a stale document using the new
@@ -68,4 +84,26 @@ in `server/app.ts`, `creation.ts`, `design.ts`, `collaboration.ts`, `live.ts`,
 `publications.ts`, `exports.ts`, `uploads.ts`, and `credits.ts`. Contract tests in
 `tests/contracts.test.ts` verify canonical paging, aliases, direct jobs, errors,
 and the explicit source-client adapter. Permission and concurrency suites test
-those handlers against a real MongoDB replica set.
+those handlers against a real PostgreSQL database.
+
+## Standalone identity and workspaces
+
+Better Auth handles `/api/auth/sign-up/email`, `/api/auth/sign-in/email`,
+`/api/auth/sign-out`, `/api/auth/get-session`, and `/api/auth/change-password`.
+Its native endpoints also handle social sign-in/callbacks, explicit account
+linking/unlinking, verification email, password reset, and session listing/revocation.
+`GET /api/auth/config` exposes only `{ providers: ("google" | "github")[], email: boolean }`;
+it contains no keys, IDs or secrets. See [account configuration](authentication.md).
+Auth endpoints keep Better Auth's native response shapes, including arrays;
+Frame's list pagination and error envelope do not wrap them.
+Passwords are hashed by Better Auth; sessions are stored in PostgreSQL and
+revocation is checked server-side. `/api/me` returns the current application user;
+PATCH updates the profile name.
+
+GET/POST `/api/workspaces` list authorized workspaces or create an owned workspace.
+PATCH `/api/workspaces/:id` renames an owned workspace. GET
+`/api/workspaces/:id/members` lists current members. PUT on that members endpoint
+accepts `{ email, role: "editor" | "viewer" }`; the owner can add an already
+registered user or update their role. DELETE `/api/workspaces/:id/members/:userId`
+revokes membership. Owners cannot remove or demote themselves. These operations
+serialize with presentation authorization guards. No identity is linked by email.

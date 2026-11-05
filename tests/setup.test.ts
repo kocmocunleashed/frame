@@ -1,245 +1,61 @@
 import { describe, test, expect } from "bun:test";
-import {
-  mkdtemp,
-  mkdir,
-  readFile,
-  rm,
-  stat,
-  writeFile,
-  symlink,
-} from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import {
-  makeSetup,
-  setupOptions,
-  writeSetup,
-  type SetupOptions,
-} from "../scripts/setup-config";
+import { makeSetup, setupOptions } from "../scripts/setup-config";
+import { writeSetup } from "../scripts/setup-config";
 import { checkOpenRouterKey } from "../scripts/check-openrouter";
-import {
-  GEMMA4_MODEL,
-  MUSE_CONTRIBUTOR_MODEL,
-} from "../shared/openrouter-models";
-
-const template = await readFile(
-  new URL("../.env.example", import.meta.url),
-  "utf8",
-);
-const erxes: SetupOptions = {
-  mode: "erxes",
-  openrouterKey: "",
-  database: "existing",
-  erxesOrigin: "http://localhost:3001",
-  erxesTenant: "school",
-};
-async function temporary(run: (root: string) => Promise<void>) {
-  const root = await mkdtemp(join(tmpdir(), "frame-setup-"));
-  try {
-    await mkdir(join(root, "frame-erxes"));
-    await run(root);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-}
-
+const template = await readFile(new URL("../.env.example", import.meta.url), "utf8");
 describe("fresh setup", () => {
-  test("setup defaults to Muse and can pin paid Gemma without changing credentials", () => {
-    const key = "sk-or-v1-" + "fixture".repeat(8);
-    for (const model of [
-      undefined,
-      MUSE_CONTRIBUTOR_MODEL,
-      GEMMA4_MODEL,
-    ] as const) {
-      const setup = makeSetup(template, {
-        ...erxes,
-        openrouterKey: key,
-        openrouterModel: model,
-      });
-      expect(setup.env).toContain(
-        `OPENROUTER_MODEL="${model ?? MUSE_CONTRIBUTOR_MODEL}"`,
-      );
-      expect(setup.env).toContain(`OPENROUTER_API_KEY="${key}"`);
-      expect(setup.env).toContain(
-        `OPENROUTER_MUSE_CONTRIBUTOR_ENABLED="${model !== GEMMA4_MODEL}"`,
-      );
-      expect(setup.adapter).not.toContain(key);
-    }
-    expect(
-      setupOptions.safeParse({
-        ...erxes,
-        openrouterModel: "unrelated/paid-model",
-      }).success,
-    ).toBe(false);
-  });
-  test("erxes env files load with matching secrets and isolated, persistent local settings", async () => {
-    await temporary(async (root) => {
-      const setup = makeSetup(template, erxes);
+  test("standalone setup generates private auth secrets and PostgreSQL configuration", async () => {
+    const root = await mkdtemp(join(tmpdir(), "frame-setup-"));
+    try {
+      const setup = makeSetup(template, { mode: "standalone", database: "docker" });
       await writeSetup(root, setup);
       expect((await stat(join(root, ".env"))).mode & 0o777).toBe(0o600);
-      expect(
-        (await stat(join(root, "frame-erxes/.env.adapter"))).mode & 0o777,
-      ).toBe(0o600);
-      const child = Bun.spawn(
-        [
-          process.execPath,
-          "--env-file=.env",
-          "--env-file=frame-erxes/.env.adapter",
-          "-e",
-          `
-        const config=JSON.parse(process.env.FRAME_ERXES_TENANTS).school;
-        if(config.secret!==process.env.FRAME_ERXES_SECRET || config.secret.length!==64)process.exit(1);
-        if(config.frameOrigin!==process.env.APP_ORIGIN || config.erxesOrigin!==process.env.FRAME_ERXES_ORIGIN)process.exit(2);
-        if(process.env.MONGODB_DATABASE!=='frame_erxes_dev' || process.env.VITE_CLERK_PUBLISHABLE_KEY)process.exit(3);
-        if(process.env.HOST!=='127.0.0.1' || process.env.FRAME_QUEUE_DRIVER!=='local')process.exit(4);
-      `,
-        ],
-        {
-          cwd: root,
-          env: { PATH: process.env.PATH, HOME: process.env.HOME },
-          stdout: "pipe",
-          stderr: "pipe",
-        },
-      );
+      const child = Bun.spawn([process.execPath, "--env-file=.env", "-e", `
+        if (!process.env.DATABASE_URL.startsWith('postgresql://frame:')) process.exit(1);
+        if (process.env.BETTER_AUTH_SECRET.length !== 64) process.exit(2);
+        if (!process.env.DATABASE_URL.includes(process.env.FRAME_POSTGRES_PASSWORD)) process.exit(3);
+      `], { cwd: root, env: { PATH: process.env.PATH, HOME: process.env.HOME }, stdout: "pipe", stderr: "pipe" });
       expect(await child.exited).toBe(0);
-      expect(setup.commands).toEqual([
-        "bunx playwright install chromium",
-        "bun run db:migrate",
-        "bun run dev",
-      ]);
-      expect(setup.adapter).not.toContain("OPENROUTER_API_KEY");
-    });
+      expect(setup.commands).toContain("docker compose up -d --wait");
+      expect(setup.commands).toContain("bun run db:migrate");
+    } finally { await rm(root, { recursive: true, force: true }); }
   });
-
-  test("existing files, symlinks, and simultaneous setup runs never overwrite configuration", async () => {
-    await temporary(async (root) => {
+  test("existing files, symlinks, and concurrent setup never overwrite configuration", async () => {
+    const root = await mkdtemp(join(tmpdir(), "frame-setup-"));
+    try {
+      const setup = makeSetup(template, { mode: "standalone", database: "docker" });
       await writeFile(join(root, ".env"), "KEEP_EXISTING=yes\n");
-      await expect(
-        writeSetup(root, makeSetup(template, erxes)),
-      ).rejects.toThrow("already exist");
-      expect(await readFile(join(root, ".env"), "utf8")).toBe(
-        "KEEP_EXISTING=yes\n",
-      );
+      await expect(writeSetup(root, setup)).rejects.toThrow("already exist");
+      expect(await readFile(join(root, ".env"), "utf8")).toBe("KEEP_EXISTING=yes\n");
+      await rm(join(root, ".env")); await symlink(join(root, "missing"), join(root, ".env"));
+      await expect(writeSetup(root, setup)).rejects.toThrow("already exist");
       await rm(join(root, ".env"));
-      await symlink(join(root, "missing-target"), join(root, ".env"));
-      await expect(
-        writeSetup(root, makeSetup(template, erxes)),
-      ).rejects.toThrow("already exist");
-      await rm(join(root, ".env"));
-      const results = await Promise.allSettled([
-        writeSetup(root, makeSetup(template, erxes)),
-        writeSetup(root, makeSetup(template, erxes)),
-      ]);
-      expect(
-        results.filter((result) => result.status === "fulfilled"),
-      ).toHaveLength(1);
-      expect(await stat(join(root, "frame-erxes/.env.adapter"))).toBeDefined();
-    });
+      const attempts = await Promise.allSettled([writeSetup(root, setup), writeSetup(root, setup)]);
+      expect(attempts.filter(r => r.status === "fulfilled")).toHaveLength(1);
+    } finally { await rm(root, { recursive: true, force: true }); }
   });
-
-  test("an adapter collision leaves the main env untouched and a write failure removes only newly created files", async () => {
-    await temporary(async (root) => {
-      await writeFile(
-        join(root, "frame-erxes/.env.adapter"),
-        "KEEP_ADAPTER=yes\n",
-      );
-      await expect(
-        writeSetup(root, makeSetup(template, erxes)),
-      ).rejects.toThrow("already exist");
-      expect(await Bun.file(join(root, ".env")).exists()).toBe(false);
-      await rm(join(root, "frame-erxes"), { recursive: true });
-      await expect(
-        writeSetup(root, makeSetup(template, erxes)),
-      ).rejects.toThrow();
-      expect(await Bun.file(join(root, ".env")).exists()).toBe(false);
-    });
+  test("Neon setup preserves its URL and preview is explicitly disposable", () => {
+    const url = "postgresql://fixture:private@db.example.test/frame_dev?sslmode=verify-full";
+    const setup = makeSetup(template, { mode: "standalone", database: "existing", databaseUrl: url });
+    expect(setup.env).toContain(`DATABASE_URL="${url}"`);
+    expect(setup.commands.join("\n")).not.toContain("docker");
+    expect(makeSetup(template, { mode: "preview" }).commands.at(-1)).toBe("bun run dev:fixture");
+    expect(setupOptions.safeParse({ mode: "standalone", database: "existing" }).success).toBe(false);
+    expect(setupOptions.safeParse({ mode: "standalone", databaseUrl: "https://unrelated.example" }).success).toBe(false);
   });
-
-  test("preview and standalone commands distinguish temporary data, real AI and persistent databases", () => {
-    const preview = makeSetup(template, {
-      mode: "preview",
-      openrouterKey: "",
-      database: "docker",
-    });
-    expect(preview.commands.at(-1)).toBe("bun run dev:fixture");
-    expect(preview.commands.join("\n")).not.toContain("db:migrate");
-    const live = makeSetup(template, {
-      mode: "preview",
-      openrouterKey: "sk-or-v1-" + "fixture".repeat(8),
-      database: "docker",
-    });
-    expect(live.commands.at(-1)).toBe("bun run dev:fixture --live-ai");
-    expect(live.commands).toContain("bun run check:openrouter");
-    expect(live.commands.join("\n")).not.toContain("fixturefixture");
-    const standalone = makeSetup(template, {
-      mode: "standalone",
-      openrouterKey: "",
-      database: "docker",
-      clerkPublishableKey: "pk_test_fixture",
-      clerkSecretKey: "sk_test_fixture",
-    });
-    expect(standalone.env).toContain(
-      'CLERK_AUTHORIZED_PARTIES="http://localhost:5174"',
-    );
-    expect(standalone.commands).toContain("docker compose up -d --wait");
-    expect(standalone.adapter).toBeUndefined();
-    const loopbackHost = makeSetup(template, {
-      ...erxes,
-      erxesOrigin: "http://127.0.0.1:3001",
-    });
-    expect(loopbackHost.origin).toBe("http://127.0.0.1:5174");
+  test("setup rejects unsafe origins and environment injection", () => {
+    for (const origin of ["https://work.example.com", "http://user:pass@localhost:5174", "http://localhost:5174/", "http://192.168.1.10:5174", "http://localhost:5174\nOTHER=yes"])
+      expect(setupOptions.safeParse({ mode: "standalone", origin }).success).toBe(false);
+    expect(setupOptions.safeParse({ mode: "standalone", openrouterKey: "private\nVITE_SECRET=bad" }).success).toBe(false);
   });
-
-  test("unsafe origins, env injection, missing identity and production keys are rejected", () => {
-    for (const erxesOrigin of [
-      "https://work.example.com",
-      "http://user:pass@localhost:3001",
-      "http://localhost:3001/",
-      "http://192.168.1.10:3001",
-      "http://localhost:3001\nOTHER=yes",
-    ])
-      expect(setupOptions.safeParse({ ...erxes, erxesOrigin }).success).toBe(
-        false,
-      );
-    expect(
-      setupOptions.safeParse({ ...erxes, erxesTenant: "$(command)" }).success,
-    ).toBe(false);
-    expect(setupOptions.safeParse({ mode: "standalone" }).success).toBe(false);
-    expect(
-      setupOptions.safeParse({
-        mode: "standalone",
-        clerkPublishableKey: "pk_live_test",
-        clerkSecretKey: "sk_live_test",
-      }).success,
-    ).toBe(false);
-    expect(
-      setupOptions.safeParse({
-        ...erxes,
-        openrouterKey: "sk-or-v1-" + "x".repeat(40) + "\nVITE_SECRET=bad",
-      }).success,
-    ).toBe(false);
-  });
-
   test("CLI help is safe without a terminal or credentials", async () => {
-    const child = Bun.spawn(
-      [
-        process.execPath,
-        "--no-env-file",
-        resolve("scripts/setup.ts"),
-        "--help",
-      ],
-      {
-        env: { PATH: process.env.PATH, HOME: process.env.HOME },
-        stdout: "pipe",
-        stderr: "pipe",
-      },
-    );
+    const child = Bun.spawn([process.execPath, "--no-env-file", resolve("scripts/setup.ts"), "--help"], { env: { PATH: process.env.PATH, HOME: process.env.HOME }, stdout: "pipe", stderr: "pipe" });
     expect(await child.exited).toBe(0);
-    expect(await new Response(child.stdout).text()).toContain(
-      "Does not start services",
-    );
+    expect(await new Response(child.stdout).text()).toContain("Does not start services");
   });
-
   test("OpenRouter connection checks only use the read-only key route and never disclose secrets or provider errors", async () => {
     const key = "private-test-value";
     let calls = 0;

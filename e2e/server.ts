@@ -1,10 +1,10 @@
 // Explicit loopback-only fixture server. Never used by the production entry point.
-import { Store } from "../tests/mongo";
+import { Store } from "../tests/postgres";
 import { createApp } from "../tests/support/legacy-app";
 import { createAIServices } from "../server/creation";
 import { FixtureAIProvider } from "../tests/fixtures/ai-provider";
 import { configuredAIProvider } from "../server/ai-provider";
-if (process.env.NODE_ENV !== "test" || !process.env.FRAME_TEST_MONGODB_URI)
+if (process.env.NODE_ENV !== "test" || !process.env.FRAME_TEST_DATABASE_URL)
   throw new Error("Use the isolated browser-test launcher.");
 const store = new Store(),
   services = createAIServices(
@@ -22,7 +22,7 @@ app.get("/__fixture/diagnostics", async (c) =>
     jobs: (
       await store.db.find(
         "jobs",
-        { status: { $in: ["running", "queued"] } },
+        { status: { inList: ["running", "queued"] } },
         { limit: 50 },
       )
     ).map((j) => ({

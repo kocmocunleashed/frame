@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { signup, newBlank } from "./helpers";
 
-test("MongoDB application edits survive reload and structured JSON remains copyable", async ({
+test("PostgreSQL application edits survive reload and structured JSON remains copyable", async ({
   page,
   context,
 }) => {
@@ -11,7 +11,7 @@ test("MongoDB application edits survive reload and structured JSON remains copya
   await page.getByRole("button", { name: "Text", exact: true }).click();
   await page
     .getByLabel("Content", { exact: true })
-    .fill("Saved through the MongoDB application.");
+    .fill("Saved through the PostgreSQL application.");
   await page.getByLabel("Presentation title", { exact: true }).click();
   await expect(
     page.getByRole("button", { name: "All changes saved", exact: true }),
@@ -40,7 +40,7 @@ test("MongoDB application edits survive reload and structured JSON remains copya
   expect(
     JSON.parse(serialized).elements.some(
       (element: { text?: string }) =>
-        element.text === "Saved through the MongoDB application.",
+        element.text === "Saved through the PostgreSQL application.",
     ),
   ).toBe(true);
   await dialog.getByRole("button", { name: "Copy JSON", exact: true }).click();

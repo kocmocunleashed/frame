@@ -3,6 +3,7 @@ import { StorageFailure } from "./storage";
 import { uid } from "../shared/schema";
 import { Store, ApiError } from "./store";
 import { contentHash } from "./database";
+import { canonicalJSON } from "../shared/json";
 export type JobProgress = { step: string; percent: number };
 export type JobRow = {
   id: string;
@@ -62,7 +63,7 @@ export class JobQueue {
     deckId: string | null = null,
     parentId: string | null = null,
   ): Promise<JobRow> {
-    const data = JSON.stringify(payload);
+    const data = canonicalJSON(payload);
     if (data.length > 2000000 || Buffer.byteLength(data) > 8 * 1024 * 1024)
       throw new ApiError(
         413,
@@ -77,7 +78,7 @@ export class JobQueue {
       });
       if (previous) {
         if (
-          previous.payload !== data ||
+          canonicalJSON(JSON.parse(previous.payload)) !== data ||
           previous.kind !== kind ||
           previous.deckId !== deckId ||
           previous.parentId !== parentId
@@ -91,10 +92,23 @@ export class JobQueue {
       const owner = await this.store.user(ownerId);
       if (!owner) throw new ApiError(404, "Account not found.");
       if (deckId) await this.store.requireAccess(deckId, owner, true);
+      let workspaceId = owner.workspaceId;
+      if (deckId) workspaceId = (await this.store.db.one("decks", { id: deckId })).workspaceId;
+      else if (parentId) workspaceId = (await this.get(parentId, ownerId)).workspaceId;
+      else if (payload && typeof payload === "object" && "draftId" in payload && payload.draftId) {
+        const draft = await this.store.db.one("creationDrafts", { id: payload.draftId, ownerId });
+        if (!draft) throw new ApiError(404, "Creation draft not found.");
+        workspaceId = draft.workspaceId;
+      }
+      if (!deckId) {
+        await this.store.db.update("workspaces", { id: workspaceId }, { increment: { accessEpoch: 1 } });
+        const member = await this.store.db.one("members", { workspaceId, userId: ownerId });
+        if (!member || member.role === "viewer") throw new ApiError(403, "Editor access is required to generate in this workspace.");
+      }
       await this.store.db.update(
         "jobQuotas",
         { id: ownerId },
-        { $inc: { revision: 1 }, $setOnInsert: { active: 0, live: 0 } },
+        { increment: { revision: 1 }, insertValues: { active: 0, live: 0 } },
         { upsert: true },
       );
       if (parentId) {
@@ -108,7 +122,7 @@ export class JobQueue {
         (await this.store.db.count("jobs", {
           ownerId,
           parentId: null,
-          status: { $in: ["queued", "running"] },
+          status: { inList: ["queued", "running"] },
         })) >= 5
       )
         throw new ApiError(
@@ -118,7 +132,7 @@ export class JobQueue {
       const job: JobRow = {
         id,
         ownerId,
-        workspaceId: owner.workspaceId,
+        workspaceId,
         deckId,
         kind,
         parentId,
@@ -164,7 +178,7 @@ export class JobQueue {
       status: "running",
       leaseOwner: this.workerId,
       leaseToken: token ?? -1,
-      leaseUntil: { $gt: this.now() },
+      leaseUntil: { greaterThan: this.now() },
       cancelRequestedAt: null,
     };
   }
@@ -172,6 +186,10 @@ export class JobQueue {
     const owner = await this.store.user(job.ownerId);
     if (!owner) throw new JobFailure("Account access is no longer available.");
     if (job.deckId) await this.store.requireAccess(job.deckId, owner, true);
+    else {
+      const member = await this.store.db.one("members", { workspaceId: job.workspaceId, userId: owner.id });
+      if (!member || member.role === "viewer") throw new JobFailure("Workspace access is no longer available.");
+    }
   }
   async claim(jobId?: string): Promise<JobRow | null> {
     await this.recover();
@@ -184,35 +202,35 @@ export class JobQueue {
         "jobs",
         {
           ...(jobId ? { id: jobId } : {}),
-          ...(slot && slot.expiresAt > time ? { kind: { $ne: "export" } } : {}),
-          attempts: { $lt: 3 },
+          ...(slot && slot.expiresAt > time ? { kind: { notEqual: "export" } } : {}),
+          attempts: { lessThan: 3 },
           cancelRequestedAt: null,
-          $or: [
-            { status: "queued", availableAt: { $lte: time } },
+          any: [
+            { status: "queued", availableAt: { atMost: time } },
             {
               status: "running",
-              leaseOwner: { $ne: null },
-              leaseUntil: { $lte: time },
+              leaseOwner: { notEqual: null },
+              leaseUntil: { atMost: time },
             },
           ],
         },
         {
-          $set: {
+          set: {
             status: "running",
             leaseOwner: this.workerId,
             leaseUntil: time + this.leaseMs,
             updatedAt: new Date(time).toISOString(),
           },
-          $inc: { attempts: 1, leaseToken: 1 },
+          increment: { attempts: 1, leaseToken: 1 },
         },
-        { sort: { createdAt: 1, _id: 1 } },
+        { sort: { createdAt: 1, id: 1 } },
       );
       if (job?.kind === "export")
         await this.store.db.update(
           "operationLeases",
           { id: "chromium-export" },
           {
-            $set: {
+            set: {
               owner: this.workerId,
               jobId: job.id,
               leaseToken: job.leaseToken,
@@ -251,14 +269,14 @@ export class JobQueue {
             owner: this.workerId,
             jobId: id,
             leaseToken: job.leaseToken,
-            expiresAt: { $gt: this.now() },
+            expiresAt: { greaterThan: this.now() },
           },
-          { $set: { expiresAt } },
+          { set: { expiresAt } },
         ))
       )
         return false;
       return !!(await this.store.db.atomic("jobs", this.guard(id, token), {
-        $set: {
+        set: {
           leaseUntil: expiresAt,
           updatedAt: new Date(this.now()).toISOString(),
         },
@@ -275,7 +293,7 @@ export class JobQueue {
         jobId: job.id,
         leaseToken: job.leaseToken,
       },
-      { $set: { expiresAt: this.now() } },
+      { set: { expiresAt: this.now() } },
     );
   }
   async deferRendering(id: string, dispatchGeneration: number) {
@@ -288,10 +306,10 @@ export class JobQueue {
           status: "queued",
           dispatchGeneration,
           cancelRequestedAt: null,
-          availableAt: { $lte: this.now() },
+          availableAt: { atMost: this.now() },
         },
         {
-          $set: {
+          set: {
             availableAt: this.now() + 30000,
             updatedAt: new Date(this.now()).toISOString(),
             progress: JSON.stringify({
@@ -299,7 +317,7 @@ export class JobQueue {
               percent: 0,
             }),
           },
-          $inc: { dispatchGeneration: 1 },
+          increment: { dispatchGeneration: 1 },
         },
       );
       if (!job) return false;
@@ -317,7 +335,7 @@ export class JobQueue {
     )
       throw new Error("Invalid progress");
     const r = await this.store.db.update("jobs", this.guard(id, token), {
-      $set: {
+      set: {
         progress: JSON.stringify({
           ...progress,
           step: progress.step.slice(0, 200),
@@ -337,7 +355,7 @@ export class JobQueue {
       await this.authorized(job);
       const changed = !!(
         await this.store.db.update("jobs", this.guard(id, token), {
-          $set: {
+          set: {
             status: "succeeded",
             result: data,
             error: null,
@@ -358,7 +376,7 @@ export class JobQueue {
       await this.store.db.update(
         "jobQuotas",
         { id: job.ownerId },
-        { $inc: { revision: 1 } },
+        { increment: { revision: 1 } },
       );
     else {
       const parent = await this.store.db.one("jobs", {
@@ -370,7 +388,7 @@ export class JobQueue {
         await this.store.db.update(
           "jobs",
           { id: parent.id },
-          { $set: { dispatchGeneration: generation } },
+          { set: { dispatchGeneration: generation } },
         );
         await this.wake({
           ...parent,
@@ -400,7 +418,7 @@ export class JobQueue {
         Math.min(30000, 2000 * 2 ** job.attempts) +
         Math.floor(Math.random() * 500);
       await this.store.db.update("jobs", this.guard(job.id, job.leaseToken), {
-        $set: {
+        set: {
           status: retry ? "queued" : "failed",
           error: message,
           leaseOwner: null,
@@ -432,12 +450,12 @@ export class JobQueue {
       await this.store.db.update(
         "jobs",
         {
-          $or: [{ id }, { parentId: id }],
+          any: [{ id }, { parentId: id }],
           ownerId,
-          status: { $in: ["queued", "running"] },
+          status: { inList: ["queued", "running"] },
         },
         {
-          $set: {
+          set: {
             status: "cancelled",
             cancelRequestedAt: this.now(),
             leaseOwner: null,
@@ -456,7 +474,7 @@ export class JobQueue {
     if (!current) return;
     await this.store.db.transaction(async () => {
       await this.store.db.update("jobs", this.guard(id), {
-        $set: {
+        set: {
           status: "queued",
           leaseOwner: null,
           leaseUntil: null,
@@ -476,8 +494,8 @@ export class JobQueue {
       "jobs",
       {
         status: "running",
-        leaseOwner: { $ne: null },
-        leaseUntil: { $lte: this.now() },
+        leaseOwner: { notEqual: null },
+        leaseUntil: { atMost: this.now() },
       },
       { limit: 100 },
     );
@@ -486,7 +504,7 @@ export class JobQueue {
         const job = await this.store.db.one("jobs", {
           id: row.id,
           status: "running",
-          leaseUntil: { $lte: this.now() },
+          leaseUntil: { atMost: this.now() },
         });
         if (!job) return;
         const retry = job.attempts < 3;
@@ -494,7 +512,7 @@ export class JobQueue {
           "jobs",
           { id: job.id, leaseToken: job.leaseToken },
           {
-            $set: {
+            set: {
               status: retry ? "queued" : "failed",
               leaseOwner: null,
               leaseUntil: null,

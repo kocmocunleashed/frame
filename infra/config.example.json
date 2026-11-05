@@ -7,10 +7,8 @@
   "zoneId": "REPLACE_ROUTE53_ZONE_ID",
   "secretArn": "REPLACE_SECRETS_MANAGER_ARN",
   "imageTag": "REPLACE_IMMUTABLE_RELEASE_TAG",
-  "authMode": "clerk",
-  "database": "frame_staging",
-  "erxesOrigin": "",
-  "erxesTenant": "",
   "cloudfrontPrefixListId": "pl-REPLACE_REGIONAL_CLOUDFRONT_PREFIX",
-  "bootstrap": true
+  "bootstrap": true,
+  "authProviders": [],
+  "authEmail": false
 }

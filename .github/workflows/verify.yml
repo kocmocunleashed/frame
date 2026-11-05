@@ -16,14 +16,15 @@ jobs:
           node-version: 22
       - run: bun install --frozen-lockfile
       - run: bunx playwright install --with-deps chromium
+      - run: bun run check:standalone
+      - run: bun run lint
       - run: bun run build
       - run: bun run test --log /tmp/frame-unit.log
       - run: bun run test:browser --log /tmp/frame-browser.log
+      - run: bun run test:browser --config e2e/standalone.config.ts
+      - run: bun run test:browser --config e2e/account-security.config.ts
       - run: bun run test:browser --config e2e/admin.config.ts
       - run: bun run test:browser --config e2e/agent.config.ts
-      - run: bun run erxes:test
-      - run: bun run erxes:build
-      - run: bun run erxes:test:browser
       - run: bun run infra:check
       - uses: actions/upload-artifact@v4
         if: always()
@@ -33,4 +34,5 @@ jobs:
             /tmp/frame-unit.log
             /tmp/frame-browser.log
             /tmp/frame-browser-results
+            /tmp/frame-account-security-browser-results
             /tmp/frame-cdk-check

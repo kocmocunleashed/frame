@@ -109,8 +109,8 @@ export class LiveSessions {
       "rateLimits",
       { id: windowKey },
       {
-        $inc: { attempts: 1 },
-        $setOnInsert: {
+        increment: { attempts: 1 },
+        insertValues: {
           key: windowKey,
           windowStart: new Date(windowStart),
           expiresAt: windowStart + window,
@@ -138,7 +138,7 @@ export class LiveSessions {
       },
       { hydrateSnapshot: false },
     )) as LiveRow | null;
-    // State, expiry and revocation always come from MongoDB. Only immutable,
+    // State, expiry and revocation always come from PostgreSQL. Only immutable,
     // hash-verified snapshot bytes are cached, with bounded memory and LRU eviction.
     const row = metadata ? await this.hydrate(metadata) : null;
     if (!row || !row.document)
@@ -176,11 +176,11 @@ export class LiveSessions {
     const row = (await this.store.db.one(
       "liveSessions",
       {
-        $and: [
+        all: [
           { deckId: deckId },
           { ownerId: user.id },
           { endedAt: null },
-          { expiresAt: { $gt: this.now() } },
+          { expiresAt: { greaterThan: this.now() } },
         ],
       },
       { sort: { createdAt: -1 }, limit: 1 },
@@ -209,14 +209,14 @@ export class LiveSessions {
       await this.store.db.update(
         "jobQuotas",
         { id: user.id },
-        { $inc: { revision: 1 } },
+        { increment: { revision: 1 } },
       );
       const count = (await {
         n: await this.store.db.count("liveSessions", {
-          $and: [
+          all: [
             { ownerId: user.id },
             { endedAt: null },
-            { expiresAt: { $gt: this.now() } },
+            { expiresAt: { greaterThan: this.now() } },
           ],
         }),
       }) as {
@@ -229,7 +229,7 @@ export class LiveSessions {
         );
       for (const id of referencedAssets(doc)) {
         const asset = (await this.store.db.one("assets", {
-          $and: [{ id: id }, { workspaceId: doc.workspaceId }],
+          all: [{ id: id }, { workspaceId: doc.workspaceId }],
         })) as {
           mime: string;
         } | null;
@@ -285,14 +285,7 @@ export class LiveSessions {
       };
     if (host || state.resultsVisible) {
       const counts = q.options.map(() => 0);
-      const rows = (await this.store.db.aggregate("liveResponses", [
-        { $match: { sessionId: row.id, round: state.round } },
-        { $group: { _id: "$optionIndex", n: { $sum: 1 } } },
-        { $project: { _id: 0, optionIndex: "$_id", n: 1 } },
-      ])) as {
-        optionIndex: number;
-        n: number;
-      }[];
+      const rows = (await this.store.db.groupedCount("liveResponses", "optionIndex", { sessionId: row.id, round: state.round })).map(item => ({ optionIndex: item.value, n: item.n }));
       for (const item of rows)
         if (item.optionIndex < counts.length) counts[item.optionIndex] = item.n;
       result.counts = counts;
@@ -304,7 +297,7 @@ export class LiveSessions {
     }
     if (participantId) {
       const response = (await this.store.db.one("liveResponses", {
-        $and: [
+        all: [
           { sessionId: row.id },
           { round: state.round },
           { participantId: participantId },
@@ -338,7 +331,7 @@ export class LiveSessions {
       }),
       connected: await this.store.db.count("liveParticipants", {
         sessionId: id,
-        lastSeen: { $gt: this.now() - 15000 },
+        lastSeen: { greaterThan: this.now() - 15000 },
       }),
     }) as {
       participants: number;
@@ -382,8 +375,8 @@ export class LiveSessions {
           "liveSessions",
           { id: id },
           {
-            $set: { endedAt: new Date(this.now()).toISOString() },
-            $inc: { version: +1 },
+            set: { endedAt: new Date(this.now()).toISOString() },
+            increment: { version: +1 },
           },
         );
         return await this.host(id, user);
@@ -459,7 +452,7 @@ export class LiveSessions {
       await this.store.db.update(
         "liveSessions",
         { id: id },
-        { $set: { state: JSON.stringify(state) }, $inc: { version: +1 } },
+        { set: { state: JSON.stringify(state) }, increment: { version: +1 } },
       );
       return await this.host(id, user);
     })();
@@ -475,18 +468,18 @@ export class LiveSessions {
       await this.store.db.update(
         "liveSessions",
         { id: row.id },
-        { $inc: { participantGuard: 1 } },
+        { increment: { participantGuard: 1 } },
       );
       const existing = token
         ? ((await this.store.db.one("liveParticipants", {
-            $and: [{ sessionId: row.id }, { tokenHash: digest(token) }],
+            all: [{ sessionId: row.id }, { tokenHash: digest(token) }],
           })) as Participant | null)
         : null;
       if (existing) {
         await this.store.db.update(
           "liveParticipants",
           { id: existing.id },
-          { $set: { lastSeen: this.now() } },
+          { set: { lastSeen: this.now() } },
         );
         return { token: token!, view: await this.audience(code, token!) };
       }
@@ -515,7 +508,7 @@ export class LiveSessions {
   async participant(row: LiveRow, token?: string): Promise<Participant> {
     const result = token
       ? ((await this.store.db.one("liveParticipants", {
-          $and: [{ sessionId: row.id }, { tokenHash: digest(token) }],
+          all: [{ sessionId: row.id }, { tokenHash: digest(token) }],
         })) as Participant | null)
       : null;
     if (!result || (result as any).expiresAt <= this.now())
@@ -531,7 +524,7 @@ export class LiveSessions {
       await this.store.db.update(
         "liveParticipants",
         { id: p.id },
-        { $set: { lastSeen: this.now() } },
+        { set: { lastSeen: this.now() } },
       );
     return {
       id: row.id,
@@ -574,7 +567,7 @@ export class LiveSessions {
           "The presenter moved to a different question. Refresh and try again.",
         );
       const previous = (await this.store.db.one("liveResponses", {
-        $and: [
+        all: [
           { sessionId: row.id },
           { round: state.round },
           { participantId: p.id },
@@ -603,7 +596,7 @@ export class LiveSessions {
       await this.store.db.update(
         "liveSessions",
         { id: row.id, version: row.version },
-        { $inc: { voteEpoch: 1 } },
+        { increment: { voteEpoch: 1 } },
       );
       await this.store.db.insert("liveResponses", {
         sessionId: row.id,
@@ -631,7 +624,7 @@ export class LiveSessions {
     )
       throw new ApiError(404, "This image is not in the session.");
     const asset = (await this.store.db.one("assets", {
-      $and: [{ id: assetId }, { workspaceId: doc.workspaceId }],
+      all: [{ id: assetId }, { workspaceId: doc.workspaceId }],
     })) as {
       storageKey: string;
       mime: string;

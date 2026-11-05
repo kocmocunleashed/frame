@@ -8,6 +8,14 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 import {
+  put as blobPut,
+  get as blobGet,
+  head as blobHead,
+  del as blobDelete,
+  list as blobList,
+  BlobNotFoundError,
+} from "@vercel/blob";
+import {
   S3Client,
   PutObjectCommand,
   GetObjectCommand,
@@ -26,6 +34,7 @@ export type StoredObject = {
   mime?: string;
 };
 export type StorageConfig =
+  | { mode: "blob"; token: string }
   | { mode: "local"; assets: string; exports: string; staging?: string }
   | {
       mode: "s3";
@@ -45,11 +54,17 @@ export class StorageFailure extends Error {
 }
 const validKey = /^[a-zA-Z0-9-]{1,100}$/;
 const missing = (e: any) =>
+  e instanceof BlobNotFoundError ||
   e.code === "ENOENT" ||
   ["NoSuchKey", "NotFound"].includes(e.name) ||
   e.$metadata?.httpStatusCode === 404;
 export function storageConfig(env = process.env): StorageConfig {
   const mode = env.FRAME_STORAGE;
+  if (mode === "blob") {
+    if (!env.BLOB_READ_WRITE_TOKEN)
+      throw new Error("Private Blob storage requires BLOB_READ_WRITE_TOKEN.");
+    return { mode, token: env.BLOB_READ_WRITE_TOKEN };
+  }
   if (mode === "local") {
     if (env.NODE_ENV === "production")
       throw new Error("Production requires private S3 storage.");
@@ -135,7 +150,9 @@ export class ObjectStorage {
     if (!validKey.test(key)) throw new Error("Invalid object key.");
     return this.config.mode === "s3"
       ? { Bucket: this.config.bucket, Key: `${area}/${key}` }
-      : join(this.directory(area), key);
+      : this.config.mode === "blob"
+        ? `${area}/${key}`
+        : join(this.directory(area), key);
   }
   async put(
     area: ObjectArea,
@@ -145,6 +162,16 @@ export class ObjectStorage {
   ) {
     const address = this.address(area, key);
     try {
+      if (this.config.mode === "blob") {
+        await blobPut(address as string, Buffer.from(bytes), {
+          token: this.config.token,
+          access: "private",
+          addRandomSuffix: false,
+          allowOverwrite: false,
+          contentType: mime,
+        });
+        return;
+      }
       if (typeof address !== "string") {
         await this.client!.send(
           new PutObjectCommand({
@@ -172,6 +199,18 @@ export class ObjectStorage {
   async stat(area: ObjectArea, key: string): Promise<StoredObject | null> {
     const address = this.address(area, key);
     try {
+      if (this.config.mode === "blob") {
+        const info = await blobHead(address as string, {
+          token: this.config.token,
+        });
+        return {
+          key,
+          bytes: info.size,
+          modifiedAt: info.uploadedAt.getTime(),
+          version: info.etag,
+          mime: info.contentType,
+        };
+      }
       if (typeof address === "string") {
         const s = await stat(address);
         return s.isFile()
@@ -210,6 +249,33 @@ export class ObjectStorage {
           range.end < range.start)
       )
         throw new Error("Invalid range");
+      if (this.config.mode === "blob") {
+        const result = await blobGet(address as string, {
+          token: this.config.token,
+          access: "private",
+          useCache: false,
+          headers: {
+            ...(range ? { Range: `bytes=${range.start}-${range.end}` } : {}),
+            ...(version ? { "If-Match": version } : {}),
+          },
+        });
+        if (
+          !result ||
+          result.statusCode !== 200 ||
+          (version && result.blob.etag !== version)
+        )
+          throw new Error();
+        if (
+          range &&
+          !result.headers
+            .get("content-range")
+            ?.startsWith(`bytes ${range.start}-${range.end}/`)
+        ) {
+          await result.stream.cancel();
+          throw new Error();
+        }
+        return result.stream;
+      }
       if (typeof address === "string") {
         const file = Bun.file(address);
         return (range ? file.slice(range.start, range.end + 1) : file).stream();
@@ -259,6 +325,10 @@ export class ObjectStorage {
   async delete(area: ObjectArea, key: string) {
     const address = this.address(area, key);
     try {
+      if (this.config.mode === "blob") {
+        await blobDelete(address as string, { token: this.config.token });
+        return;
+      }
       if (typeof address === "string") await unlink(address);
       else await this.client!.send(new DeleteObjectCommand(address));
     } catch (e) {
@@ -267,6 +337,28 @@ export class ObjectStorage {
   }
   async *list(area: ObjectArea): AsyncGenerator<StoredObject> {
     try {
+      if (this.config.mode === "blob") {
+        let cursor: string | undefined;
+        do {
+          const page = await blobList({
+            token: this.config.token,
+            prefix: `${area}/`,
+            cursor,
+            limit: 1000,
+          });
+          for (const item of page.blobs) {
+            const key = item.pathname.slice(area.length + 1);
+            if (validKey.test(key))
+              yield {
+                key,
+                bytes: item.size,
+                modifiedAt: item.uploadedAt.getTime(),
+              };
+          }
+          cursor = page.hasMore ? page.cursor : undefined;
+        } while (cursor);
+        return;
+      }
       if (this.config.mode === "local") {
         const names = await readdir(this.directory(area)).catch((e) => {
           if (missing(e)) return [];
@@ -309,7 +401,9 @@ export class ObjectStorage {
       return this.probePromise;
     this.probeAt = Date.now();
     return (this.probePromise = (async () => {
-      if (this.config.mode === "s3") {
+      if (this.config.mode === "blob") {
+        await blobList({ token: this.config.token, limit: 1 });
+      } else if (this.config.mode === "s3") {
         await this.client!.send(
           new HeadBucketCommand({ Bucket: this.config.bucket }),
           { abortSignal: AbortSignal.timeout(4000) },

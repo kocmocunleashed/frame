@@ -6,8 +6,6 @@ WORKDIR /app
 COPY package.json bun.lock bunfig.toml ./
 RUN bun install --frozen-lockfile --ignore-scripts
 COPY . .
-ARG VITE_CLERK_PUBLISHABLE_KEY
-ENV VITE_CLERK_PUBLISHABLE_KEY=$VITE_CLERK_PUBLISHABLE_KEY
 RUN bun run build
 
 FROM docker.io/oven/bun:1.3.14-debian AS runtime
@@ -25,6 +23,7 @@ COPY --from=build --chown=bun:bun /app/server ./server
 COPY --from=build --chown=bun:bun /app/shared ./shared
 COPY --from=build --chown=bun:bun /app/src ./src
 COPY --from=build --chown=bun:bun /app/scripts ./scripts
+COPY --from=build --chown=bun:bun /app/drizzle ./drizzle
 USER bun
 EXPOSE 3158
 CMD ["bun", "server/index.ts"]

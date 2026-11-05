@@ -1,9 +1,9 @@
 // Isolated replica-set server; this resolver is never imported by production.
-import { Store } from "../tests/mongo";
+import { Store } from "../tests/postgres";
 import { createApp } from "../server/app";
 import { createAIServices } from "../server/creation";
 import { FixtureAIProvider } from "../tests/fixtures/ai-provider";
-if(process.env.NODE_ENV!=='test'||!process.env.FRAME_TEST_MONGODB_URI)throw new Error('Use the isolated browser-test launcher.');
+if(process.env.NODE_ENV!=='test'||!process.env.FRAME_TEST_DATABASE_URL)throw new Error('Use the isolated browser-test launcher.');
 const store = new Store();
 await store.testReady;
 const admin = await store.createUser(
