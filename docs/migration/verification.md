@@ -1,27 +1,27 @@
 # Phase 1 verification record
 
-Verified on 2026-11-05 using Bun 1.3.14 and Node 22.23.1. The supplied directory has no Git metadata, so this work was validated in place without committing, pushing, or resetting files.
+Verified on 2026-11-05 using Bun 1.3.14 and Node 22.23.1. The supplied directory initially had no Git metadata. The repository history was restored from `kocmocunleashed/frame` before publishing the standalone migration; existing working files were retained.
 
 ## Checks performed
 
-| Check                                      | Result                                                                                                                |
-| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
-| Frozen Bun installation                    | Passed; lockfile required no changes                                                                                  |
-| `bun run typecheck`                        | Passed                                                                                                                |
-| `bun run lint`                             | Passed; this repository uses a Prettier formatting check, with TypeScript checking separately                         |
-| `bun run build`                            | Passed; Vite reported a nonblocking chunk-size warning                                                                |
-| `bun run test`                             | 230 passed, 0 failed across 37 files                                                                                  |
-| `bun run test:browser`                     | 53 passed, 0 failed on the final stable run                                                                           |
-| Standalone authentication browser suite    | 1 passed: real registration, workspace creation, edit/save/reload, presentation, logout/login                         |
-| Account security browser suite             | 1 passed: email verification, connected-method controls, session revocation, password change and recovery             |
-| Administrator browser suite                | 3 passed                                                                                                              |
-| Account and agent settings browser suite   | 3 passed                                                                                                              |
-| `bun run infra:check`                      | Passed; regional/edge CDK synthesis and infrastructure assertions                                                     |
-| `bun run db:generate` after implementation | No schema changes; migrations match the Drizzle schema                                                                |
-| Neon migrations                            | Four checked-in migrations applied successfully to the isolated development database                                  |
-| `bun run check:standalone`                 | Passed; 1,387 API/worker runtime modules audited without Erxes, MongoDB, Mongoose or Clerk imports                    |
-| Frontend credential scan                   | No configured database URL, auth secret or backup key in any of 74 build artifacts                                    |
-| UI preservation                            | All seven existing CSS files are byte-for-byte unchanged; editor, slide renderer and presentation components retained |
+| Check                                      | Result                                                                                                                         |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| Frozen Bun installation                    | Passed; lockfile required no changes                                                                                           |
+| `bun run typecheck`                        | Passed                                                                                                                         |
+| `bun run lint`                             | Passed; this repository uses a Prettier formatting check, with TypeScript checking separately                                  |
+| `bun run build`                            | Passed; Vite reported a nonblocking chunk-size warning                                                                         |
+| `bun run test`                             | 231 passed, 0 failed across 38 files                                                                                           |
+| `bun run test:browser`                     | 53 passed, 0 failed on the final stable run                                                                                    |
+| Standalone authentication browser suite    | 1 passed: real registration, workspace creation, edit/save/reload, presentation, logout/login                                  |
+| Account security browser suite             | 1 passed: email verification, connected-method controls, session revocation, password change and recovery                      |
+| Administrator browser suite                | 3 passed                                                                                                                       |
+| Account and agent settings browser suite   | 3 passed                                                                                                                       |
+| `bun run infra:check`                      | Passed; regional/edge CDK synthesis and infrastructure assertions                                                              |
+| `bun run db:generate` after implementation | No schema changes; migrations match the Drizzle schema                                                                         |
+| Neon migrations                            | Four checked-in migrations applied successfully to the isolated development database                                           |
+| `bun run check:standalone`                 | Passed; 1,585 API/worker runtime modules, including Vercel entry points, audited without obsolete identity or database imports |
+| Frontend credential scan                   | No configured database URL, auth secret or backup key in any of 74 build artifacts                                             |
+| UI preservation                            | All seven existing CSS files are byte-for-byte unchanged; editor, slide renderer and presentation components retained          |
 
 The integration suites cover revision races, authorization and revocation, immutable large documents, idempotent jobs, worker leases, generation and resume, credits, source extraction, uploads, publishing, live responses, exports, backup/restore, and dry-run/import rollback. AI tests use explicit test providers or intercepted provider responses; they do not prove a paid live inference call.
 
@@ -60,6 +60,14 @@ Through the running application and real Neon driver, verified:
 Neon uses its WebSocket driver because direct TCP access from the verification machine timed out. Frame's own small pool uses the direct Neon endpoint for transaction and migration-lock support. Local integration tests used PostgreSQL 17 in an isolated container, with separate schemas per test run.
 
 Better Auth's upstream package manifest includes an unused Mongo adapter package and an optional MongoDB peer declaration. Frame imports `better-auth/minimal` and the Drizzle adapter. The actual MongoDB driver is absent, and neither the unused adapter nor any MongoDB code appears in the API/worker import graphs. No package substitution or fake adapter was introduced to hide this upstream metadata.
+
+## Vercel release preparation
+
+The existing `vercel-frame` project still owns `frame.leoh.site`. Vercel adapters now provide private Blob storage, signed Queue consumption, protected cron recovery, and packaged serverless Chromium. Existing ECS/local adapters remain available. The release uses a separate Neon branch, `frame-standalone-production`, and database `frame_phase1_release_20261105`; the former production database is retained.
+
+A read-only PostgreSQL export preserved 7 users and workspaces, 31 presentation heads, 257 revisions, 290 snapshots, 9 assets, 7 sources, 30 creation drafts and 272 job records. A complete dry-run passed, then the same archive was imported transactionally. Two usable password hashes were preserved. Five identity records without password hashes remain reserved for explicit administrator provisioning; signing up with a matching email cannot claim them. Existing Blob object keys were retained. Transient sessions and upload intents remain in the private source archive, and pending legacy work requires deliberate review/resume after cutover.
+
+Checksums across all 28 preserved source tables matched the private export before staging. The release test run passed 231 tests. The standalone and account-security browser suites passed, along with six export/foundation browser checks. Live private Blob metadata and byte ranges passed, and the packaged serverless Chromium produced a valid PDF through the existing Node driver. Deployment inventory checks excluded local environment files and private storage. The release is staged without moving the custom domain until hosted checks pass.
 
 ## Remaining external validation
 
